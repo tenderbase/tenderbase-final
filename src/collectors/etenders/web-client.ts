@@ -46,10 +46,7 @@ function partyFromValue(value: unknown, fallbackPrefix: string): Party | undefin
   }
   const name = clean(value);
   if (!name) return undefined;
-  return {
-    id: `${fallbackPrefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
-    name,
-  };
+  return { id: `${fallbackPrefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`, name };
 }
 
 function rowParty(row: Record<string, unknown>, prefix: string): Party | undefined {
@@ -100,6 +97,7 @@ export class EtendersWebClient {
   constructor(
     private readonly baseUrl = BASE_URL,
     private readonly timeoutMs = Number(process.env.ETENDERS_WEB_TIMEOUT_MS ?? 30000),
+    private readonly maxRetries = Number(process.env.ETENDERS_WEB_MAX_RETRIES ?? 4),
   ) {}
 
   async getOpportunities(query: WebOpportunityQuery = {}) {
@@ -119,34 +117,43 @@ export class EtendersWebClient {
     if (query.category) params.category = query.category;
     if (query.tenderType) params.tenderType = query.tenderType;
     if (query.eSubmission) params.eSubmission = query.eSubmission;
-
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          accept: 'application/json, text/javascript, */*; q=0.01',
-          'user-agent': 'TenderBase/1.0 eTenders web collector',
-          'x-requested-with': 'XMLHttpRequest',
-          referer: `${this.baseUrl}/Home/opportunities?id=1`,
-        },
-      });
-      const body = await response.text();
-      if (!response.ok) throw new Error(`eTenders web HTTP ${response.status} at ${url}: ${body.slice(0, 500)}`);
-      const parsed = responseSchema.parse(JSON.parse(body));
-      return {
-        draw: parsed.draw,
-        recordsTotal: parsed.recordsTotal ?? 0,
-        recordsFiltered: parsed.recordsFiltered ?? 0,
-        rows: parsed.data,
-        releases: parsed.data.map(asRelease),
-      };
-    } finally {
-      clearTimeout(timer);
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            accept: 'application/json, text/javascript, */*; q=0.01',
+            'user-agent': 'TenderBase/1.0 eTenders web collector',
+            'x-requested-with': 'XMLHttpRequest',
+            referer: `${this.baseUrl}/Home/opportunities?id=1`,
+          },
+        });
+        const body = await response.text();
+        if (!response.ok) throw new Error(`eTenders web HTTP ${response.status} at ${url}: ${body.slice(0, 500)}`);
+        const parsed = responseSchema.parse(JSON.parse(body));
+        return {
+          draw: parsed.draw,
+          recordsTotal: parsed.recordsTotal ?? 0,
+          recordsFiltered: parsed.recordsFiltered ?? 0,
+          rows: parsed.data,
+          releases: parsed.data.map(asRelease),
+        };
+      } catch (error) {
+        lastError = error;
+        if (attempt >= this.maxRetries) throw error;
+        const delay = Math.min(30000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 500);
+        console.warn(`[etenders-web] request failed (attempt ${attempt + 1}/${this.maxRetries + 1}); retrying in ${delay}ms`, error instanceof Error ? error.message : String(error));
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } finally {
+        clearTimeout(timer);
+      }
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   async *iterate(query: Omit<WebOpportunityQuery, 'start'> = {}) {
