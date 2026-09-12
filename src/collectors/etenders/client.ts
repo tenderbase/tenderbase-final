@@ -34,13 +34,10 @@ export class EtendersClient {
         const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json', 'user-agent': 'TenderBase/0.2 OCDS collector' } });
         if (response.ok) {
           const body = await response.json();
-          const parsed = packageSchema.parse(body);
-          return parsed as unknown as ReleasePackage;
+          return packageSchema.parse(body) as unknown as ReleasePackage;
         }
         const body = await response.text();
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          throw new Error(`eTenders HTTP ${response.status} at ${url}: ${body}`);
-        }
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) throw new Error(`eTenders HTTP ${response.status} at ${url}: ${body}`);
         lastError = new Error(`eTenders HTTP ${response.status} at ${url}`);
       } catch (error) {
         lastError = error;
@@ -49,6 +46,19 @@ export class EtendersClient {
       await sleep(500 * 2 ** attempt);
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  async getRelease(ocid: string): Promise<Release> {
+    const url = new URL(`/api/OCDSReleases/release/${encodeURIComponent(ocid)}`, this.baseUrl);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json', 'user-agent': 'TenderBase/0.2 OCDS collector' } });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`eTenders HTTP ${response.status} at ${url}: ${body}`);
+      const parsed = JSON.parse(body);
+      return ((parsed as any).release ?? parsed) as Release;
+    } finally { clearTimeout(timer); }
   }
 
   async getPageWithFallback(pageNumber: number, dateFrom?: Date, dateTo?: Date) {
@@ -62,10 +72,8 @@ export class EtendersClient {
 
   async *iterate(dateFrom: Date, dateTo: Date) {
     let page = 1;
-    let chosenPageSize: number | undefined;
     while (true) {
       const result = await this.getPageWithFallback(page, dateFrom, dateTo);
-      chosenPageSize = chosenPageSize ?? result.pageSize;
       const releases = result.package.releases ?? [];
       yield { page, pageSize: result.pageSize, releases, package: result.package };
       if (releases.length === 0 || releases.length < result.pageSize) break;
