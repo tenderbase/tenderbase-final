@@ -3,6 +3,7 @@ import type { Release, ReleasePackage } from './types.js';
 
 const BASE_URL = (process.env.ETENDERS_BASE_URL ?? 'https://ocds-api.etenders.gov.za').replace(/\/$/, '');
 const PAGE_SIZES = [100, 500, 1000, 5000];
+const DATE_WINDOW_DAYS = Number(process.env.ETENDERS_DATE_WINDOW_DAYS ?? 7);
 const packageSchema = z.object({ releases: z.array(z.unknown()).optional(), links: z.record(z.string(), z.unknown()).optional() }).passthrough();
 
 export interface ReleaseQuery { pageNumber: number; pageSize: number; dateFrom?: Date; dateTo?: Date }
@@ -15,6 +16,11 @@ function apiDate(value?: Date) {
   return `${year}-${month}-${day}`;
 }
 function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function addUtcDays(value: Date, days: number) {
+  const next = new Date(value.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
 
 export class EtendersClient {
   constructor(private readonly baseUrl = BASE_URL, private readonly timeoutMs = Number(process.env.ETENDERS_TIMEOUT_MS ?? 60000)) {}
@@ -71,15 +77,27 @@ export class EtendersClient {
   }
 
   async *iterate(dateFrom: Date, dateTo: Date) {
-    let page = 1;
-    while (true) {
-      const result = await this.getPageWithFallback(page, dateFrom, dateTo);
-      const releases = result.package.releases ?? [];
-      yield { page, pageSize: result.pageSize, releases, package: result.package };
-      if (releases.length === 0 || releases.length < result.pageSize) break;
-      page++;
+    // The official eTenders API is operationally limited to short date windows;
+    // the established collector pattern uses 7-day windows. Keep the caller's
+    // requested range intact while paging each window independently.
+    const windowDays = Math.max(1, DATE_WINDOW_DAYS);
+    let windowStart = new Date(dateFrom.getTime());
+
+    while (windowStart <= dateTo) {
+      const windowEnd = new Date(Math.min(addUtcDays(windowStart, windowDays - 1).getTime(), dateTo.getTime()));
+      let page = 1;
+
+      while (true) {
+        const result = await this.getPageWithFallback(page, windowStart, windowEnd);
+        const releases = result.package.releases ?? [];
+        yield { page, pageSize: result.pageSize, releases, package: result.package, dateFrom: new Date(windowStart), dateTo: new Date(windowEnd) };
+        if (releases.length === 0 || releases.length < result.pageSize) break;
+        page++;
+      }
+
+      windowStart = addUtcDays(windowEnd, 1);
     }
   }
 }
 
-export { BASE_URL, PAGE_SIZES };
+export { BASE_URL, PAGE_SIZES, DATE_WINDOW_DAYS };
