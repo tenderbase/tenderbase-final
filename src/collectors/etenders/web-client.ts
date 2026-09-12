@@ -91,7 +91,7 @@ function asRelease(row: Record<string, unknown>): Release {
     date: clean(row.date_Published ?? row.datePublished ?? row.publishedDate),
     description: clean(row.description ?? row.title),
     tender,
-    buyer,
+    buyer: buyer as JsonObject | undefined,
     parties: [buyer, procuringEntity].filter(Boolean) as Party[],
   };
 }
