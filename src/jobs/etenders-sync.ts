@@ -1,7 +1,19 @@
+import { createServer } from 'node:http';
 import { db } from '../db.js';
 import { EtendersClient } from '../collectors/etenders/client.js';
 import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
+
+// Render web services require an open port shortly after startup. Keep a tiny
+// health endpoint alive while the long-running ingestion job executes.
+const port = Number(process.env.PORT ?? 10000);
+const healthServer = createServer((_req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ingesting', service: 'etenders-sync' }));
+});
+healthServer.listen(port, '0.0.0.0', () => {
+  console.log(JSON.stringify({ service: 'etenders-sync', healthPort: port, status: 'ready' }));
+});
 
 const arg = (name: string) => { const hit = process.argv.find(x => x.startsWith(`--${name}=`)); return hit?.split('=')[1]; };
 const days = Number(arg('days') ?? 0);
@@ -18,8 +30,6 @@ function parsedDate(value: unknown): Date | undefined {
 
 async function runWebFallback(runId: string) {
   const client = new EtendersWebClient();
-  // Status 1 is already covered by the live/current opportunities sync.
-  // Historical recovery only needs awarded, closed and cancelled feeds.
   const statuses = [2, 3, 4];
   let pages = 0, releases = 0, succeeded = 0, failed = 0;
 
