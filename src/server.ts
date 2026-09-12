@@ -1,5 +1,7 @@
 import Fastify from 'fastify';
 import { db } from './db.js';
+import { EtendersClient } from './collectors/etenders/client.js';
+import { persistRelease } from './collectors/etenders/importer.js';
 
 const app = Fastify({ logger: true });
 
@@ -7,6 +9,21 @@ app.get('/', async () => ({ name: 'TenderBase API', version: 'v1', status: 'ok',
 app.get('/health', async () => { await db.$queryRaw`SELECT 1`; return { status: 'ok', service: 'tenderbase-api', database: 'ok' }; });
 app.get('/openapi.json', async () => ({ openapi: '3.0.3', info: { title: 'TenderBase API', version: '1.0.0' }, paths: {} }));
 app.get('/docs', async () => ({ message: 'API documentation endpoint', openapi: '/openapi.json' }));
+
+app.get('/internal/etenders-smoke', async (request, reply) => {
+  const token = (request.query as any)?.token;
+  if (!process.env.ETENDERS_SMOKE_TOKEN || token !== process.env.ETENDERS_SMOKE_TOKEN) return reply.code(404).send({ error: 'Not found' });
+  const to = new Date();
+  const from = new Date(to.getTime() - 2 * 60 * 60 * 1000);
+  const client = new EtendersClient();
+  const result = await client.getPageWithFallback(1, from, to);
+  let succeeded = 0, failed = 0;
+  for (const release of result.package.releases ?? []) {
+    try { await persistRelease(release); succeeded++; }
+    catch (error) { failed++; app.log.error({ err: error, releaseId: release.id }, 'Smoke ingestion failed'); }
+  }
+  return { from, to, pageSize: result.pageSize, releases: result.package.releases?.length ?? 0, succeeded, failed };
+});
 
 function pagination(q: any) { const page = Math.max(1, Number(q.page ?? 1)); const limit = Math.min(100, Math.max(1, Number(q.limit ?? q.pageSize ?? 25))); return { page, limit, skip: (page - 1) * limit }; }
 function date(v?: string) { return v ? new Date(v) : undefined; }
@@ -48,9 +65,9 @@ app.get('/api/v1/buyers', async (request) => { const q = request.query as any; c
 app.get('/api/v1/buyers/:id', async (request, reply) => { const { id } = request.params as any; const x = await db.organization.findUnique({ where: { id }, include: { roles: true, buyerTenders: { take: 20, orderBy: { publishedDate: 'desc' } } } }); if (!x) return reply.code(404).send({ error: 'Buyer not found' }); return x; });
 app.get('/api/v1/buyers/:id/tenders', async (request) => { const { id } = request.params as any; const { page, limit, skip } = pagination(request.query); return { page, limit, items: await db.tender.findMany({ where: { buyerId: id }, orderBy: { publishedDate: 'desc' }, skip, take: limit }) }; });
 
-app.get('/api/v1/suppliers', async (request) => { const q = request.query as any; const { page, limit, skip } = pagination(q); return { page, limit, items: await db.organization.findMany({ where: { roles: { some: { role: 'supplier' } }, ...(q.q ? { name: { contains: q.q, mode: 'insensitive' } } : {}) }, orderBy: { name: 'asc' }, skip, take: limit }) }; });
+app.get('/api/v1/suppliers', async (request) => { const q = request.query as any; const { page, limit, skip } = pagination(q); return { page, limit, items: await db.organization.findMany({ where: { roles: { some: { role: 'supplier' } }, ...(q.q ? { name: { contains: q.q, mode: 'insensitive' } } : {}) }, orderBy: { name: 'asc' }, skip, take: limit }); });
 app.get('/api/v1/suppliers/:id', async (request, reply) => { const { id } = request.params as any; const x = await db.organization.findUnique({ where: { id }, include: { suppliers: { include: { award: true } } } }); if (!x) return reply.code(404).send({ error: 'Supplier not found' }); return x; });
-app.get('/api/v1/awards', async (request) => { const { page, limit, skip } = pagination(request.query); return { page, limit, items: await db.award.findMany({ orderBy: { date: 'desc' }, skip, take: limit, include: { suppliers: { include: { organization: true } } } }) }; });
+app.get('/api/v1/awards', async (request) => { const { page, limit, skip } = pagination(request.query); return { page, limit, items: await db.award.findMany({ orderBy: { date: 'desc' }, skip, take: limit, include: { suppliers: { include: { organization: true } } } }) });
 app.get('/api/v1/tenders/:id/awards', async (request) => { const { id } = request.params as any; const tender = await db.tender.findFirst({ where: { OR: [{ id }, { ocid: id }] } }); return tender ? db.award.findMany({ where: { tenderId: tender.id }, include: { suppliers: { include: { organization: true } } } }) : []; });
 app.get('/api/v1/tenders/:id/documents', async (request) => { const { id } = request.params as any; const tender = await db.tender.findFirst({ where: { OR: [{ id }, { ocid: id }] } }); return tender ? db.document.findMany({ where: { tenderId: tender.id } }) : []; });
 app.get('/api/v1/statistics/tenders', async () => ({ tenders: await db.tender.count(), releases: await db.release.count(), sourceRecords: await db.sourceRecord.count(), organizations: await db.organization.count(), awards: await db.award.count(), contracts: await db.contract.count() }));
