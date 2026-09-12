@@ -1,0 +1,18 @@
+name: Keep eTenders scraper awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  wake-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake eTenders scraper
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --max-time 120 \
+            https://tenderbase-etenders-30d-ingest.onrender.com/ \
+            -o /tmp/health.json
+          cat /tmp/health.json
