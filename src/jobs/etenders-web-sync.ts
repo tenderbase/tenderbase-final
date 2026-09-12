@@ -1,6 +1,5 @@
 import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
-import { db } from '../db.js';
 
 function numberArg(name: string, fallback: number): number {
   const arg = process.argv.find((value) => value.startsWith(`--${name}=`));
@@ -63,16 +62,3 @@ export async function runSync(options: {
   if (fetched === 0) throw new Error('eTenders web feed returned zero rows');
   return { status: 'completed', fetched, persisted, failed, dryRun } as const;
 }
-
-async function main() {
-  try {
-    console.log(JSON.stringify(await runSync()));
-  } finally {
-    await db.$disconnect();
-  }
-}
-
-main().catch((error) => {
-  console.error('[etenders-web] failed:', error);
-  process.exit(1);
-});
