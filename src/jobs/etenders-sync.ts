@@ -18,16 +18,19 @@ function parsedDate(value: unknown): Date | undefined {
 
 async function runWebFallback(runId: string) {
   const client = new EtendersWebClient();
-  const statuses = [1, 2, 3, 4];
+  // Status 1 is already covered by the live/current opportunities sync.
+  // Historical recovery only needs awarded, closed and cancelled feeds.
+  const statuses = [2, 3, 4];
   let pages = 0, releases = 0, succeeded = 0, failed = 0;
 
-  console.log(JSON.stringify({ source: 'etenders-web-fallback', dateFrom, dateTo, statuses }));
+  console.log(JSON.stringify({ source: 'etenders-web-fallback', dateFrom, dateTo, statuses, batchSize: 10 }));
 
   for (const status of statuses) {
     let statusPages = 0;
     for await (const page of client.iterate({ length: 100, status })) {
       pages++; statusPages++;
       const pageDates: number[] = [];
+      const candidates = [] as Array<{ release: typeof page.releases[number]; releaseDate: Date }>;
 
       for (let i = 0; i < page.releases.length; i++) {
         const release = page.releases[i];
@@ -35,19 +38,25 @@ async function runWebFallback(runId: string) {
         const releaseDate = parsedDate(release.date) ?? parsedDate(row.date_Published ?? row.datePublished ?? row.publishedDate);
         if (releaseDate) pageDates.push(releaseDate.getTime());
         if (!releaseDate || releaseDate < dateFrom || releaseDate > dateTo) continue;
+        candidates.push({ release, releaseDate });
+      }
 
-        releases++;
-        try {
-          await persistRelease(release);
-          succeeded++;
-        } catch (error) {
-          failed++;
-          await db.ingestionError.create({ data: { ingestionRunId: runId, endpoint: '/Home/PaginatedTenderOpportunities', page: statusPages, releaseId: release.id, message: error instanceof Error ? error.message : String(error), payload: release as any } });
-        }
+      for (let offset = 0; offset < candidates.length; offset += 10) {
+        const batch = candidates.slice(offset, offset + 10);
+        await Promise.all(batch.map(async ({ release }) => {
+          releases++;
+          try {
+            await persistRelease(release);
+            succeeded++;
+          } catch (error) {
+            failed++;
+            await db.ingestionError.create({ data: { ingestionRunId: runId, endpoint: '/Home/PaginatedTenderOpportunities', page: statusPages, releaseId: release.id, message: error instanceof Error ? error.message : String(error), payload: release as any } });
+          }
+        }));
       }
 
       await db.ingestionRun.update({ where: { id: runId }, data: { pages, releases, succeeded, failed, checkpoint: status * 100000 + statusPages, pageSize: 100 } });
-      console.log(JSON.stringify({ mode: 'web-fallback', status, page: statusPages, recordsTotal: page.recordsTotal, pageRows: page.rows.length, releases, succeeded, failed, oldest: pageDates.length ? new Date(Math.min(...pageDates)).toISOString() : null, newest: pageDates.length ? new Date(Math.max(...pageDates)).toISOString() : null }));
+      console.log(JSON.stringify({ mode: 'web-fallback', status, page: statusPages, recordsTotal: page.recordsTotal, pageRows: page.rows.length, matched: candidates.length, releases, succeeded, failed, oldest: pageDates.length ? new Date(Math.min(...pageDates)).toISOString() : null, newest: pageDates.length ? new Date(Math.max(...pageDates)).toISOString() : null }));
 
       if (page.rows.length === 0 || page.rows.length < 100) break;
       if (pageDates.length > 0 && Math.max(...pageDates) < dateFrom.getTime()) break;
