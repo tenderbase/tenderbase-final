@@ -13,7 +13,7 @@ healthServer.listen(port, '0.0.0.0', () => console.log(JSON.stringify({ service:
 
 const arg = (name: string) => process.argv.find(x => x.startsWith(`--${name}=`))?.split('=')[1];
 const initialDays = Number(arg('days') ?? 30);
-const pollMinutes = Number(process.env.ETENDERS_POLL_MINUTES ?? 15);
+const pollMinutes = Math.max(1, Number(process.env.ETENDERS_POLL_MINUTES ?? 15));
 
 function parsedDate(value: unknown): Date | undefined {
   if (value === null || value === undefined || value === '') return undefined;
@@ -30,7 +30,30 @@ async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuse
 
   for (const status of statuses) {
     let statusPages = 0;
-    for await (const page of client.iterate({ length: 100, status })) {
+    let start = 0;
+    const length = 100;
+
+    // Fetch pages explicitly so an isolated upstream HTTP 500 does not abort
+    // every other status/feed. The failed page is recorded and this status is
+    // skipped; the next status can still complete and the next poll retries it.
+    while (true) {
+      let page;
+      try {
+        page = await client.getOpportunities({ start, length, status });
+      } catch (error) {
+        failed++;
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(JSON.stringify({ mode, status, page: statusPages + 1, start, error: message, action: 'skip-page-and-continue' }));
+        await db.ingestionError.create({ data: {
+          ingestionRunId: runId,
+          endpoint: '/Home/PaginatedTenderOpportunities',
+          page: statusPages + 1,
+          message,
+          payload: { status, start, length, mode } as any,
+        }});
+        break;
+      }
+
       pages++; statusPages++;
       const pageDates: number[] = [];
       const candidates: Array<{ release: typeof page.releases[number]; releaseDate: Date }> = [];
@@ -69,8 +92,10 @@ async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuse
         oldest: pageDates.length ? new Date(Math.min(...pageDates)).toISOString() : null,
         newest: pageDates.length ? new Date(Math.max(...pageDates)).toISOString() : null }));
 
-      if (page.rows.length === 0 || page.rows.length < 100) break;
+      if (page.rows.length === 0 || page.rows.length < length) break;
       if (pageDates.length > 0 && Math.max(...pageDates) < dateFrom.getTime()) break;
+      if (page.recordsFiltered && start + length >= page.recordsFiltered) break;
+      start += length;
     }
   }
   return { pages, releases, succeeded, failed };
@@ -104,9 +129,8 @@ async function main() {
     const firstFrom = new Date(firstTo.getTime() - initialDays * 86400000);
     await executeRun(firstFrom, firstTo, [1, 2, 3, 4], 'initial-backfill');
 
-    // Then keep the database fresh forever. Only status 1 is needed for the
-    // new-tender feed; lifecycle data remains stored in the database from the backfill.
-    // A 15-minute default gives TenderBase a near-real-time new-tender feed.
+    // Keep the database fresh forever. Only status 1 is polled because it is
+    // the currently-advertised/new-tender feed. Every poll gets its own run.
     while (true) {
       const to = new Date();
       const from = new Date(to.getTime() - Math.max(pollMinutes * 2, 60) * 60000);
