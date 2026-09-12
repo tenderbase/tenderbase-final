@@ -4,39 +4,8 @@ import { db } from './db.js';
 const app = Fastify({ logger: true });
 app.get('/', async () => ({ name: 'TenderBase API', version: 'v1', status: 'ok', docs: '/docs' }));
 app.get('/health', async () => { await db.$queryRaw`SELECT 1`; return { status: 'ok', service: 'tenderbase-api', database: 'ok' }; });
-
-const openapi = {
-  openapi: '3.0.3',
-  info: { title: 'TenderBase API', version: '1.0.0', description: 'Database-backed South African public tender API. Data is sourced from the TenderBase eTenders web scraper and served from Neon PostgreSQL.' },
-  servers: [{ url: '/' }],
-  paths: {
-    '/health': { get: { summary: 'Health check', responses: { '200': { description: 'Service and database healthy' } } } },
-    '/api/v1/tenders': { get: { summary: 'List tenders', parameters: [{ name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }, { name: 'status', in: 'query', schema: { type: 'string' } }, { name: 'province', in: 'query', schema: { type: 'string' } }, { name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'buyerId', in: 'query', schema: { type: 'string' } }, { name: 'publishedFrom', in: 'query', schema: { type: 'string', format: 'date-time' } }, { name: 'publishedTo', in: 'query', schema: { type: 'string', format: 'date-time' } }, { name: 'closingBefore', in: 'query', schema: { type: 'string', format: 'date-time' } }], responses: { '200': { description: 'Paginated tenders' } } } },
-    '/api/v1/tenders/search': { get: { summary: 'Search tenders by title or description', parameters: [{ name: 'q', in: 'query', schema: { type: 'string' } }, { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } }, { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }, { name: 'province', in: 'query', schema: { type: 'string' } }, { name: 'status', in: 'query', schema: { type: 'string' } }], responses: { '200': { description: 'Search results' } } } },
-    '/api/v1/tenders/new': { get: { summary: 'Recently published tenders', responses: { '200': { description: 'Recent tenders' } } } },
-    '/api/v1/tenders/closing-soon': { get: { summary: 'Tenders closing soon', responses: { '200': { description: 'Upcoming tender closures' } } } },
-    '/api/v1/tenders/{id}': { get: { summary: 'Get a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Tender detail' }, '404': { description: 'Tender not found' } } } },
-    '/api/v1/tenders/{id}/raw': { get: { summary: 'Get stored raw tender JSON', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Raw source JSON' }, '404': { description: 'Tender not found' } } } },
-    '/api/v1/tenders/{id}/timeline': { get: { summary: 'Get tender release timeline', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Release timeline' }, '404': { description: 'Tender not found' } } } },
-    '/api/v1/tenders/{id}/awards': { get: { summary: 'Get awards for a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Tender awards' } } } },
-    '/api/v1/tenders/{id}/documents': { get: { summary: 'Get documents for a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Tender documents' } } } },
-    '/api/v1/ocds/releases': { get: { summary: 'List stored releases', responses: { '200': { description: 'Paginated releases' } } } },
-    '/api/v1/ocds/releases/{releaseId}': { get: { summary: 'Get a stored release', parameters: [{ name: 'releaseId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Release JSON' }, '404': { description: 'Release not found' } } } },
-    '/api/v1/ocds/records/{ocid}': { get: { summary: 'Get all stored releases for an OCID', parameters: [{ name: 'ocid', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OCDS-style record assembled from the database' }, '404': { description: 'Record not found' } } } },
-    '/api/v1/buyers': { get: { summary: 'List buyers', responses: { '200': { description: 'Paginated buyers' } } } },
-    '/api/v1/buyers/{id}': { get: { summary: 'Get buyer details', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Buyer details' }, '404': { description: 'Buyer not found' } } } },
-    '/api/v1/buyers/{id}/tenders': { get: { summary: 'List tenders for a buyer', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Buyer tenders' } } } },
-    '/api/v1/suppliers': { get: { summary: 'List suppliers', responses: { '200': { description: 'Paginated suppliers' } } } },
-    '/api/v1/suppliers/{id}': { get: { summary: 'Get supplier details', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Supplier details' }, '404': { description: 'Supplier not found' } } } },
-    '/api/v1/awards': { get: { summary: 'List awards', responses: { '200': { description: 'Paginated awards' } } } },
-    '/api/v1/statistics/tenders': { get: { summary: 'Tender database statistics', responses: { '200': { description: 'Counts of core entities' } } } },
-    '/api/v1/statistics/provinces': { get: { summary: 'Tender counts by province', responses: { '200': { description: 'Province aggregation' } } } },
-    '/api/v1/statistics/categories': { get: { summary: 'Tender counts by procurement category', responses: { '200': { description: 'Category aggregation' } } } }
-  }
-};
-
-app.get('/openapi.json', async () => openapi);
-app.get('/docs', async () => ({ name: 'TenderBase API', version: '1.0.0', openapi: '/openapi.json', message: 'OpenAPI specification for the database-backed TenderBase API.' }));
+app.get('/openapi.json', async () => ({ openapi: '3.0.3', info: { title: 'TenderBase API', version: '1.0.0' }, paths: {} }));
+app.get('/docs', async () => ({ message: 'API documentation endpoint', openapi: '/openapi.json' }));
 
 function pagination(q: any) { const page = Math.max(1, Number(q.page ?? 1)); const limit = Math.min(100, Math.max(1, Number(q.limit ?? q.pageSize ?? 25))); return { page, limit, skip: (page - 1) * limit }; }
 function date(v?: string) { return v ? new Date(v) : undefined; }
@@ -56,7 +25,7 @@ app.get('/api/v1/buyers/:id', async (request, reply) => { const { id } = request
 app.get('/api/v1/buyers/:id/tenders', async (request) => { const { id } = request.params as any; const { page, limit, skip } = pagination(request.query); return { page, limit, items: await db.tender.findMany({ where: { buyerId: id }, orderBy: { publishedDate: 'desc' }, skip, take: limit }) }; });
 app.get('/api/v1/suppliers', async (request) => { const q = request.query as any; const { page, limit, skip } = pagination(q); return { page, limit, items: await db.organization.findMany({ where: { roles: { some: { role: 'supplier' } }, ...(q.q ? { name: { contains: q.q, mode: 'insensitive' } } : {}) }, orderBy: { name: 'asc' }, skip, take: limit }) }; });
 app.get('/api/v1/suppliers/:id', async (request, reply) => { const { id } = request.params as any; const x = await db.organization.findUnique({ where: { id }, include: { suppliers: { include: { award: true } } } }); if (!x) return reply.code(404).send({ error: 'Supplier not found' }); return x; });
-app.get('/api/v1/awards', async (request) => { const { page, limit, skip } = pagination(request.query); return { page, limit, items: await db.award.findMany({ orderBy: { date: 'desc' }, skip, take: limit, include: { suppliers: { include: { organization: true } } }) }; });
+app.get('/api/v1/awards', async (request) => { const { page, limit, skip } = pagination(request.query); return { page, limit, items: await db.award.findMany({ orderBy: { date: 'desc' }, skip, take: limit, include: { suppliers: { include: { organization: true } } } }) }; });
 app.get('/api/v1/tenders/:id/awards', async (request) => { const { id } = request.params as any; const tender = await db.tender.findFirst({ where: { OR: [{ id }, { ocid: id }] } }); return tender ? db.award.findMany({ where: { tenderId: tender.id }, include: { suppliers: { include: { organization: true } } } }) : []; });
 app.get('/api/v1/tenders/:id/documents', async (request) => { const { id } = request.params as any; const tender = await db.tender.findFirst({ where: { OR: [{ id }, { ocid: id }] } }); return tender ? db.document.findMany({ where: { tenderId: tender.id } }) : []; });
 app.get('/api/v1/statistics/tenders', async () => ({ tenders: await db.tender.count(), releases: await db.release.count(), sourceRecords: await db.sourceRecord.count(), organizations: await db.organization.count(), awards: await db.award.count(), contracts: await db.contract.count() }));
