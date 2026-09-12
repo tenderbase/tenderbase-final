@@ -7,7 +7,14 @@ const packageSchema = z.object({ releases: z.array(z.unknown()).optional(), link
 
 export interface ReleaseQuery { pageNumber: number; pageSize: number; dateFrom?: Date; dateTo?: Date }
 
-function isoDate(value?: Date) { return value ? value.toISOString() : undefined; }
+// The eTenders OCDS API expects calendar dates (YYYY-MM-DD), not ISO timestamps.
+function apiDate(value?: Date) {
+  if (!value) return undefined;
+  const year = value.getUTCFullYear();
+  const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(value.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 export class EtendersClient {
@@ -17,8 +24,8 @@ export class EtendersClient {
     const url = new URL('/api/OCDSReleases', this.baseUrl);
     url.searchParams.set('PageNumber', String(query.pageNumber));
     url.searchParams.set('PageSize', String(query.pageSize));
-    if (query.dateFrom) url.searchParams.set('dateFrom', isoDate(query.dateFrom)!);
-    if (query.dateTo) url.searchParams.set('dateTo', isoDate(query.dateTo)!);
+    if (query.dateFrom) url.searchParams.set('dateFrom', apiDate(query.dateFrom)!);
+    if (query.dateTo) url.searchParams.set('dateTo', apiDate(query.dateTo)!);
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 4; attempt++) {
