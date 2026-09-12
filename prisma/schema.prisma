@@ -7,23 +7,50 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model OcdsRelease {
-  id            String   @id
-  ocid          String
-  date          DateTime?
-  tag           String[]
+model Source {
+  id          String         @id @default(cuid())
+  key         String         @unique
+  name        String
+  baseUrl     String
+  active      Boolean        @default(true)
+  records     SourceRecord[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model SourceRecord {
+  id          String   @id @default(cuid())
+  sourceId    String
+  releaseId   String
+  ocid        String
+  releaseDate DateTime?
+  contentHash String
+  rawJson     Json
+  ingestedAt  DateTime @default(now())
+  source      Source   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, releaseId])
+  @@index([ocid])
+  @@index([releaseDate])
+  @@index([contentHash])
+}
+
+model Release {
+  id             String   @id @default(cuid())
+  sourceRecordId String   @unique
+  ocid           String
+  releaseId      String   @unique
+  date           DateTime?
+  tags           String[]
   initiationType String?
-  language      String?
-  raw           Json
-  ingestedAt    DateTime @default(now())
-  buyerId       String?
-  buyer         Party?   @relation("ReleaseBuyer", fields: [buyerId], references: [id])
-  links         Json?
+  language       String?
+  description    String?
+  tenderId       String?
+  rawJson        Json
+  sourceRecord   SourceRecord @relation(fields: [sourceRecordId], references: [id], onDelete: Cascade)
 
   @@index([ocid])
   @@index([date])
-  @@index([buyerId])
-  @@index([ingestedAt])
 }
 
 model Tender {
@@ -33,38 +60,78 @@ model Tender {
   title                    String?
   description              String?
   status                   String?
+  category                 String?
+  province                 String?
   procurementMethod        String?
   procurementMethodDetails String?
   mainProcurementCategory  String?
   publishedDate            DateTime?
   closingDate              DateTime?
+  enquiryStart             DateTime?
+  enquiryEnd               DateTime?
+  awardStart               DateTime?
+  awardEnd                 DateTime?
   valueAmount              Decimal?     @db.Decimal(18, 2)
   valueCurrency            String?
-  raw                      Json
+  procuringEntityId        String?
+  buyerId                  String?
+  rawJson                  Json
+  procuringEntity          Organization? @relation("TenderProcuringEntity", fields: [procuringEntityId], references: [id])
+  buyer                    Organization? @relation("TenderBuyer", fields: [buyerId], references: [id])
+  lots                     Lot[]
   items                    TenderItem[]
   documents                Document[]
+  briefings                Briefing[]
+  contacts                 Contact[]
+  categories               TenderCategory[]
+  locations                TenderLocation[]
   awards                   Award[]
   contracts                Contract[]
 
   @@index([publishedDate])
   @@index([closingDate])
   @@index([status])
+  @@index([province])
   @@index([procurementMethod])
   @@index([mainProcurementCategory])
+  @@index([buyerId])
+}
+
+model Organization {
+  id            String             @id @default(cuid())
+  ocdsId        String?            @unique
+  name          String
+  identifier    String?
+  address       Json?
+  contactPoint  Json?
+  rawJson       Json
+  roles         OrganizationRole[]
+  buyerTenders  Tender[]           @relation("TenderBuyer")
+  procuringTenders Tender[]        @relation("TenderProcuringEntity")
+  suppliers     AwardSupplier[]
+
+  @@index([name])
+  @@index([identifier])
+}
+
+model OrganizationRole {
+  id             String       @id @default(cuid())
+  organizationId String
+  role           String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, role])
 }
 
 model Party {
-  id           String        @id @default(cuid())
-  ocdsId       String?       @unique
+  id           String   @id @default(cuid())
+  ocdsId       String?  @unique
   name         String
   identifier   String?
   partyType    String?
   address      Json?
   contactPoint Json?
-  raw          Json
-  buyerReleases OcdsRelease[] @relation("ReleaseBuyer")
+  rawJson      Json
   roles        PartyRole[]
-
   @@index([name])
   @@index([identifier])
 }
@@ -74,74 +141,160 @@ model PartyRole {
   partyId String
   role    String
   party   Party  @relation(fields: [partyId], references: [id], onDelete: Cascade)
-
   @@unique([partyId, role])
-  @@index([role])
+}
+
+model Lot {
+  id          String  @id @default(cuid())
+  tenderId    String
+  lotId       String
+  title       String?
+  description String?
+  valueAmount Decimal? @db.Decimal(18, 2)
+  currency    String?
+  tender      Tender  @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@unique([tenderId, lotId])
 }
 
 model TenderItem {
-  id               String   @id @default(cuid())
-  tenderId         String
-  itemId           String?
-  description      String?
-  quantity         Decimal? @db.Decimal(18, 4)
-  unit             String?
-  classification   Json?
-  deliveryAddress  Json?
-  tender           Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
-
+  id              String   @id @default(cuid())
+  tenderId        String
+  itemId          String
+  description     String?
+  quantity        Decimal? @db.Decimal(18, 4)
+  unit            String?
+  classification  Json?
+  deliveryAddress Json?
+  deliveryPeriod  Json?
+  tender          Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@unique([tenderId, itemId])
   @@index([tenderId])
 }
 
 model Document {
-  id             String    @id @default(cuid())
-  tenderId       String
-  documentId     String?
-  documentType   String?
-  title          String?
-  format         String?
-  url            String?
-  datePublished  DateTime?
-  tender         Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
-
-  @@index([tenderId])
+  id            String   @id @default(cuid())
+  tenderId      String
+  documentId    String
+  documentType  String?
+  title         String?
+  description   String?
+  format        String?
+  url           String?
+  datePublished DateTime?
+  dateModified  DateTime?
+  tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@unique([tenderId, documentId])
   @@index([documentType])
 }
 
+model Briefing {
+  id          String   @id @default(cuid())
+  tenderId    String
+  briefingId  String
+  date        DateTime?
+  venue       String?
+  address     Json?
+  tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@unique([tenderId, briefingId])
+}
+
+model Contact {
+  id          String   @id @default(cuid())
+  tenderId    String
+  name        String?
+  email       String?
+  telephone   String?
+  faxNumber   String?
+  tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@index([email])
+}
+
+model TenderCategory {
+  id       String @id @default(cuid())
+  tenderId String
+  code     String
+  scheme   String?
+  name     String?
+  tender   Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@unique([tenderId, code, scheme])
+}
+
+model TenderLocation {
+  id       String @id @default(cuid())
+  tenderId String
+  country  String?
+  province String?
+  city     String?
+  address  Json?
+  tender   Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  @@index([province])
+  @@index([city])
+}
+
 model Award {
-  id            String     @id @default(cuid())
+  id            String   @id @default(cuid())
   tenderId      String
-  awardId       String?
+  awardId       String
   status        String?
   title         String?
   description   String?
   date          DateTime?
-  valueAmount   Decimal?   @db.Decimal(18, 2)
+  valueAmount   Decimal? @db.Decimal(18, 2)
   valueCurrency String?
-  suppliers     Json?
-  raw           Json
-  tender        Tender     @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  rawJson       Json
+  tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  suppliers     AwardSupplier[]
   contracts     Contract[]
-
-  @@index([tenderId])
+  @@unique([tenderId, awardId])
   @@index([date])
+}
+
+model AwardSupplier {
+  id             String       @id @default(cuid())
+  awardId        String
+  organizationId String
+  award          Award        @relation(fields: [awardId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@unique([awardId, organizationId])
 }
 
 model Contract {
   id            String   @id @default(cuid())
   tenderId      String
   awardId       String?
-  contractId    String?
+  contractId    String
   title         String?
   period        Json?
   valueAmount   Decimal? @db.Decimal(18, 2)
   valueCurrency String?
-  raw           Json
+  rawJson       Json
   tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   award         Award?   @relation(fields: [awardId], references: [id])
-
-  @@index([tenderId])
+  documents     ContractDocument[]
+  @@unique([tenderId, contractId])
   @@index([awardId])
+}
+
+model ContractDocument {
+  id         String   @id @default(cuid())
+  contractId String
+  documentId String
+  title      String?
+  format     String?
+  url        String?
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  @@unique([contractId, documentId])
+}
+
+model RelatedProcess {
+  id              String @id @default(cuid())
+  releaseId       String
+  relationship    String
+  identifier      String
+  scheme          String?
+  uri             String?
+  release        Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  @@index([identifier])
 }
 
 model IngestionRun {
@@ -151,16 +304,28 @@ model IngestionRun {
   finishedAt  DateTime?
   dateFrom    DateTime?
   dateTo      DateTime?
+  pageSize    Int?
   pages       Int      @default(0)
   releases    Int      @default(0)
   succeeded   Int      @default(0)
   failed      Int      @default(0)
   status      String   @default("running")
+  checkpoint  Int      @default(0)
   error       String?
   metadata    Json?
-
+  errors      IngestionError[]
   @@index([startedAt])
   @@index([status])
+}
+
+model IngestionCheckpoint {
+  id             String   @id @default(cuid())
+  source         String   @unique
+  pageNumber     Int      @default(0)
+  dateFrom       DateTime?
+  dateTo         DateTime?
+  lastReleaseDate DateTime?
+  updatedAt      DateTime @updatedAt
 }
 
 model IngestionError {
@@ -172,7 +337,7 @@ model IngestionError {
   releaseId      String?
   message        String
   payload        Json?
-
+  ingestionRun   IngestionRun? @relation(fields: [ingestionRunId], references: [id], onDelete: Cascade)
   @@index([ingestionRunId])
   @@index([occurredAt])
 }
