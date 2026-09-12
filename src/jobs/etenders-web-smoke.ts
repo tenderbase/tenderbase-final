@@ -1,6 +1,30 @@
 import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
+import { runSync } from './etenders-web-sync.js';
 import { db } from '../db.js';
+
+const fullSync = process.env.ETENDERS_RUN_FULL_SYNC === 'true';
+
+if (fullSync) {
+  try {
+    const result = await runSync({
+      pageLength: 100,
+      maxReleases: Number(process.env.ETENDERS_FULL_SYNC_MAX ?? 10000),
+      status: 1,
+    });
+    console.log(JSON.stringify({ mode: 'full-sync', ...result, counts: {
+      tenders: await db.tender.count(),
+      releases: await db.release.count(),
+      sourceRecords: await db.sourceRecord.count(),
+      organizations: await db.organization.count(),
+      awards: await db.award.count(),
+      contracts: await db.contract.count(),
+    }}));
+  } finally {
+    await db.$disconnect();
+  }
+  process.exit(0);
+}
 
 const client = new EtendersWebClient();
 const length = Math.min(Math.max(Number(process.env.ETENDERS_SMOKE_LENGTH ?? 10), 1), 100);
