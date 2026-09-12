@@ -2,12 +2,11 @@ import { z } from 'zod';
 import type { Release, ReleasePackage } from './types.js';
 
 const BASE_URL = (process.env.ETENDERS_BASE_URL ?? 'https://ocds-api.etenders.gov.za').replace(/\/$/, '');
-const PAGE_SIZES = [20000, 10000, 5000, 1000];
+const PAGE_SIZES = [100, 500, 1000, 5000];
 const packageSchema = z.object({ releases: z.array(z.unknown()).optional(), links: z.record(z.string(), z.unknown()).optional() }).passthrough();
 
 export interface ReleaseQuery { pageNumber: number; pageSize: number; dateFrom?: Date; dateTo?: Date }
 
-// The eTenders OCDS API expects calendar dates (YYYY-MM-DD), not ISO timestamps.
 function apiDate(value?: Date) {
   if (!value) return undefined;
   const year = value.getUTCFullYear();
@@ -38,10 +37,11 @@ export class EtendersClient {
           const parsed = packageSchema.parse(body);
           return parsed as unknown as ReleasePackage;
         }
+        const body = await response.text();
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          throw new Error(`eTenders HTTP ${response.status}: ${await response.text()}`);
+          throw new Error(`eTenders HTTP ${response.status} at ${url}: ${body}`);
         }
-        lastError = new Error(`eTenders HTTP ${response.status}`);
+        lastError = new Error(`eTenders HTTP ${response.status} at ${url}`);
       } catch (error) {
         lastError = error;
         if (attempt === 3) break;
