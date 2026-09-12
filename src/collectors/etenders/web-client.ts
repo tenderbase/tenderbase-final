@@ -79,7 +79,7 @@ function asRelease(row: Record<string, unknown>): Release {
       startDate: clean(row.date_Published ?? row.datePublished ?? row.publishedDate),
       endDate: clean(row.closing_Date ?? row.closingDate ?? row.closeDate),
     },
-    procuringEntity,
+    procuringEntity: procuringEntity as JsonObject | undefined,
   };
 
   const id = clean(row.id ?? row.tenderNumber ?? row.tenderNo ?? row.referenceNumber);
