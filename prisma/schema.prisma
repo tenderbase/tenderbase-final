@@ -27,6 +27,7 @@ model SourceRecord {
   rawJson Json
   ingestedAt DateTime @default(now())
   source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  release Release?
   @@unique([sourceId, releaseId])
   @@index([ocid])
   @@index([releaseDate])
