@@ -46,7 +46,7 @@ async function runWebFallback(runId: string) {
         }
       }
 
-      await db.ingestionRun.update({ where: { id: runId }, data: { pages, releases, succeeded, failed, checkpoint: `${status}:${statusPages}`, pageSize: 100 } });
+      await db.ingestionRun.update({ where: { id: runId }, data: { pages, releases, succeeded, failed, checkpoint: status * 100000 + statusPages, pageSize: 100 } });
       console.log(JSON.stringify({ mode: 'web-fallback', status, page: statusPages, recordsTotal: page.recordsTotal, pageRows: page.rows.length, releases, succeeded, failed, oldest: pageDates.length ? new Date(Math.min(...pageDates)).toISOString() : null, newest: pageDates.length ? new Date(Math.max(...pageDates)).toISOString() : null }));
 
       if (page.rows.length === 0 || page.rows.length < 100) break;
