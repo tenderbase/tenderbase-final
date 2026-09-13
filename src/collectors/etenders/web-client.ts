@@ -30,6 +30,16 @@ function clean(value: unknown): string | undefined {
   return text || undefined;
 }
 
+function classifyTenderType(...values: Array<unknown>): string | undefined {
+  const text = values.map(clean).filter(Boolean).join(' ').toUpperCase();
+  if (!text) return undefined;
+  if (/\b(RFQ|REQUEST FOR QUOTATION|REQUEST FOR QUOTES)\b/.test(text)) return 'RFQ';
+  if (/\b(RFP|REQUEST FOR PROPOSAL|REQUEST FOR PROPOSALS)\b/.test(text)) return 'RFP';
+  if (/\b(ITT|INVITATION TO TENDER|INVITATION FOR TENDERS)\b/.test(text)) return 'ITT';
+  if (/\b(EOI|EXPRESSION OF INTEREST)\b/.test(text)) return 'EOI';
+  return undefined;
+}
+
 function partyFromValue(value: unknown, fallbackPrefix: string): Party | undefined {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     const raw = value as Record<string, unknown>;
@@ -63,14 +73,18 @@ function rowParty(row: Record<string, unknown>, prefix: string): Party | undefin
 function asRelease(row: Record<string, unknown>): Release {
   const buyer = rowParty(row, 'buyer');
   const procuringEntity = rowParty(row, 'procuring');
+  const title = clean(row.description ?? row.title ?? row.tenderDescription);
+  const description = clean(row.description ?? row.title);
+  const explicitTenderType = clean(row.tenderType ?? row.tender_type ?? row.procurementMethod);
+  const tenderType = explicitTenderType ?? classifyTenderType(title, description);
   const tender: Tender = {
     id: clean(row.tenderNumber ?? row.tenderNo ?? row.referenceNumber ?? row.id),
-    title: clean(row.description ?? row.title ?? row.tenderDescription),
-    description: clean(row.description ?? row.title),
+    title,
+    description,
     category: clean(row.category),
     province: clean(row.province),
     status: clean(row.status),
-    procurementMethodDetails: clean(row.tenderType ?? row.procurementMethod),
+    procurementMethodDetails: tenderType,
     submissionMethodDetails: clean(row.eSubmission),
     tenderPeriod: {
       startDate: clean(row.date_Published ?? row.datePublished ?? row.publishedDate),
@@ -86,7 +100,7 @@ function asRelease(row: Record<string, unknown>): Release {
     ocid,
     id: `${ocid}-release`,
     date: clean(row.date_Published ?? row.datePublished ?? row.publishedDate),
-    description: clean(row.description ?? row.title),
+    description,
     tender,
     buyer: buyer as JsonObject | undefined,
     parties: [buyer, procuringEntity].filter(Boolean) as Party[],
