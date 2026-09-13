@@ -104,6 +104,7 @@ function asRelease(row: Record<string, unknown>): Release {
     tender,
     buyer: buyer as JsonObject | undefined,
     parties: [buyer, procuringEntity].filter(Boolean) as Party[],
+    sourceRow: row,
   };
 }
 
