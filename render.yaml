@@ -7,5 +7,6 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: npm install && npx prisma generate && npm run build
+    preDeployCommand: npx prisma db push --accept-data-loss
     startCommand: npm start
     healthCheckPath: /health
