@@ -52,31 +52,38 @@ app.addHook('preValidation', async (request: any, reply: any) => {
   const search = String(q.q ?? q.search ?? '').trim();
   const pattern = search ? '%' + search + '%' : null;
   const totalRows: any[] = await db.$queryRawUnsafe(
-    'SELECT COUNT(*)::int AS count FROM "Organization" o WHERE EXISTS (SELECT 1 FROM "Tender" t WHERE t."buyerId" = o.id) AND ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", \\'\\') ILIKE $1)', pattern
+    'SELECT COUNT(*)::int AS count FROM \"Organization\" o WHERE EXISTS (SELECT 1 FROM \"Tender\" t WHERE t.\"buyerId\" = o.id) AND ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o.\"identifier\", \\\'\\\') ILIKE $1)', pattern
   );
   const total = Number(totalRows[0]?.count ?? 0);
   const items = await db.$queryRawUnsafe(
-    'SELECT o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson", COUNT(t.id)::int AS "tenderCount" FROM "Organization" o INNER JOIN "Tender" t ON t."buyerId" = o.id WHERE ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", \\'\\') ILIKE $1) GROUP BY o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson" ORDER BY o.name ASC LIMIT $2 OFFSET $3', pattern, limit, offset
+    'SELECT o.id, o.\"ocdsId\", o.name, o.identifier, o.address, o.\"contactPoint\", o.\"rawJson\", COUNT(t.id)::int AS \"tenderCount\" FROM \"Organization\" o INNER JOIN \"Tender\" t ON t.\"buyerId\" = o.id WHERE ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o.\"identifier\", \\\'\\\') ILIKE $1) GROUP BY o.id, o.\"ocdsId\", o.name, o.identifier, o.address, o.\"contactPoint\", o.\"rawJson\" ORDER BY o.name ASC LIMIT $2 OFFSET $3', pattern, limit, offset
   );
   return reply.send({ page, limit, total, pages: Math.ceil(total / limit), items });
 });
 `;
-  source = source.replace(/\n$/, '') + buyerHook + '\n';
+  source = source.replace(/\\n$/, '') + buyerHook + '\\n';
 }
 
-// TenderBase department filter: map the API's department parameter to the
-// procuring entity organization name already stored with each tender.
+// TenderBase department filter
 if (!source.includes('TenderBase department filter')) {
   source = source.replace(
-    "if (q.category) where.mainProcurementCategory = q.category; if (q.buyerId) where.buyerId = q.buyerId;",
-    "if (q.category) where.mainProcurementCategory = q.category; if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId) where.buyerId = q.buyerId;"
+    "if (q.category) where.mainProcurementCategory = q.category;",
+    "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
+  );
+  source = source.replace(
+    "if (q.category) where.mainProcurementCategory = q.category;",
+    "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
+  );
+  source = source.replace(
+    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };",
+    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } };"
   );
   source = source.replace(
     "{ name: 'category', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
     "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
   );
-  source += "\n// TenderBase department filter\n";
+  source += "\\n// TenderBase department filter\\n";
 }
 
 fs.writeFileSync(file, source);
-console.log('TenderBase API hardening/buyer directory/department filter patch applied');
+console.log('TenderBase API hardening/buyer directory/category/department filter patch applied');
