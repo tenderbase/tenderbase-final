@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/harden-api.mjs && node scripts/fix-category-filter.mjs && tsc && cp src/fastify-hardening.cjs dist/fastify-hardening.cjs",
+    "build": "node scripts/harden-api.mjs && tsc && cp src/fastify-hardening.cjs dist/fastify-hardening.cjs",
     "start": "node -r ./dist/fastify-hardening.cjs dist/server.js",
     "dev": "tsx watch src/server.ts",
     "db:generate": "prisma generate",
