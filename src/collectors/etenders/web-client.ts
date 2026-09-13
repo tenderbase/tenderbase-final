@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { JsonObject, Party, Release, Tender } from './types.js';
+import type { JsonObject, Party, Release, Tender, Document } from './types.js';
 
 const BASE_URL = (process.env.ETENDERS_WEB_BASE_URL ?? 'https://www.etenders.gov.za').replace(/\/$/, '');
 const ENDPOINT = '/Home/PaginatedTenderOpportunities';
@@ -70,6 +70,71 @@ function rowParty(row: Record<string, unknown>, prefix: string): Party | undefin
   return undefined;
 }
 
+const DOCUMENT_CONTAINER_KEYS = new Set(['documents', 'document', 'supportdocuments', 'supportdocument', 'supportdocumentlist', 'supportdocumentfiles', 'attachments', 'files']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalKey(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function extractDocuments(row: Record<string, unknown>): Document[] {
+  const found = new Map<string, Document>();
+  const visited = new Set<object>();
+
+  const visit = (value: unknown, hint?: string) => {
+    if (!value || typeof value !== 'object') return;
+    if (visited.has(value as object)) return;
+    visited.add(value as object);
+
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, hint);
+      return;
+    }
+
+    const raw = value as Record<string, unknown>;
+    const entries = Object.entries(raw);
+    const keyMap = new Map(entries.map(([key, val]) => [normalKey(key), val]));
+    const blobName = clean(keyMap.get('blobname') ?? keyMap.get('blob') ?? keyMap.get('blobfilename'));
+    const downloadedFileName = clean(keyMap.get('downloadedfilename') ?? keyMap.get('filename') ?? keyMap.get('originalfilename') ?? keyMap.get('documentname') ?? keyMap.get('name'));
+    const supportDocumentId = clean(keyMap.get('supportdocumentid') ?? keyMap.get('supportdocumentidvalue'));
+    const url = clean(keyMap.get('url') ?? keyMap.get('documenturl') ?? keyMap.get('downloadurl'));
+    const title = clean(keyMap.get('title') ?? keyMap.get('description') ?? downloadedFileName);
+    const format = clean(keyMap.get('format') ?? keyMap.get('mimetype') ?? keyMap.get('contenttype'));
+
+    if (blobName || supportDocumentId || (url && (hint === 'document' || hint === 'supportdocument'))) {
+      const id = supportDocumentId ?? blobName ?? url;
+      if (id) {
+        found.set(id, {
+          id,
+          documentType: clean(keyMap.get('documenttype') ?? keyMap.get('type')),
+          title,
+          description: clean(keyMap.get('description')),
+          format,
+          url: url ?? (blobName ? `${BASE_URL}/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(downloadedFileName ?? blobName)}` : undefined),
+          datePublished: clean(keyMap.get('datepublished') ?? keyMap.get('publisheddate')),
+          dateModified: clean(keyMap.get('datemodified') ?? keyMap.get('modifieddate')),
+          supportDocumentId,
+          blobName,
+          downloadedFileName: downloadedFileName ?? blobName,
+        });
+      }
+    }
+
+    for (const [key, child] of entries) {
+      const normalized = normalKey(key);
+      const childHint = DOCUMENT_CONTAINER_KEYS.has(normalized) ? normalized : hint;
+      if (DOCUMENT_CONTAINER_KEYS.has(normalized) || normalized.includes('document')) visit(child, childHint);
+      else if (isRecord(child) || Array.isArray(child)) visit(child, childHint);
+    }
+  };
+
+  visit(row);
+  return [...found.values()];
+}
+
 function asRelease(row: Record<string, unknown>): Release {
   const buyer = rowParty(row, 'buyer');
   const procuringEntity = rowParty(row, 'procuring');
@@ -77,6 +142,7 @@ function asRelease(row: Record<string, unknown>): Release {
   const description = clean(row.description ?? row.title);
   const explicitTenderType = clean(row.tenderType ?? row.tender_type ?? row.procurementMethod);
   const tenderType = explicitTenderType ?? classifyTenderType(title, description);
+  const documents = extractDocuments(row);
   const tender: Tender = {
     id: clean(row.tenderNumber ?? row.tenderNo ?? row.referenceNumber ?? row.id),
     title,
@@ -90,6 +156,7 @@ function asRelease(row: Record<string, unknown>): Release {
       startDate: clean(row.date_Published ?? row.datePublished ?? row.publishedDate),
       endDate: clean(row.closing_Date ?? row.closingDate ?? row.closeDate),
     },
+    documents,
     procuringEntity: procuringEntity as JsonObject | undefined,
   };
 
@@ -184,4 +251,4 @@ export class EtendersWebClient {
   }
 }
 
-export { BASE_URL, ENDPOINT };
+export { BASE_URL, ENDPOINT, extractDocuments };
