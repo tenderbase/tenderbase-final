@@ -20,6 +20,13 @@ for (const release of page.releases) {
     documentsDiscovered += result.documents ?? 0;
 
     if (result.normalized && result.tenderId && result.downloadableDocuments) {
+      // This is a storage smoke test: force the discovered sample documents back
+      // into the download queue so an existing /tmp download cannot make the test
+      // look successful without exercising the configured storage provider.
+      await db.document.updateMany({
+        where: { tenderId: result.tenderId, blobName: { not: null } },
+        data: { downloadStatus: 'discovered', lastDownloadError: null },
+      });
       const downloads = await downloadDiscoveredDocuments(result.tenderId);
       documentsDownloaded += downloads.length;
     }
@@ -52,6 +59,8 @@ const sampleDocuments = await db.document.findMany({
     blobName: true,
     downloadedFileName: true,
     downloadStatus: true,
+    storageProvider: true,
+    storageBucket: true,
     storagePath: true,
     fileSize: true,
     checksum: true,
