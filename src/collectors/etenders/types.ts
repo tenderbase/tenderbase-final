@@ -26,6 +26,7 @@ export interface Release {
   awards?: Award[];
   contracts?: Contract[];
   relatedProcesses?: RelatedProcess[];
+  sourceRow?: JsonObject;
 }
 
 export interface Tender {
