@@ -4,7 +4,6 @@ import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
 import { downloadDiscoveredDocuments } from '../collectors/etenders/document-downloader.js';
 
-// Official eTenders website scraper is the sole TenderBase ingestion source.
 const port = Number(process.env.PORT ?? 10000);
 const healthServer = createServer((_req, res) => {
   res.writeHead(200, { 'content-type': 'application/json' });
@@ -76,8 +75,7 @@ async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuse
               if (downloaded.length < discovered) documentFailures += discovered - downloaded.length;
             }
             succeeded++;
-          }
-          catch (error) {
+          } catch (error) {
             failed++;
             await db.ingestionError.create({ data: {
               ingestionRunId: runId,
@@ -119,13 +117,17 @@ async function executeRun(dateFrom: Date, dateTo: Date, statuses: number[], mode
   try {
     result = await scrapeWindow(run.id, dateFrom, dateTo, statuses, mode);
     await db.ingestionRun.update({ where: { id: run.id }, data: {
-      finishedAt: new Date(), status: result.failed || result.documentFailures ? 'completed_with_errors' : 'completed', ...result, pageSize: 100, error: null,
+      finishedAt: new Date(), status: result.failed || result.documentFailures ? 'completed_with_errors' : 'completed',
+      pages: result.pages, releases: result.releases, succeeded: result.succeeded, failed: result.failed,
+      pageSize: 100, error: null,
+      metadata: { mode, source: 'official-etenders-website-scraper', downloadDocuments, documents: result.documents, documentFailures: result.documentFailures },
     }});
     console.log(JSON.stringify({ runId: run.id, status: result.failed || result.documentFailures ? 'completed_with_errors' : 'completed', ...result, source: 'etenders-web-scraper', mode }));
     return result;
   } catch (error) {
     await db.ingestionRun.update({ where: { id: run.id }, data: {
-      finishedAt: new Date(), status: 'failed', error: error instanceof Error ? error.message : String(error), ...result, pageSize: 100,
+      finishedAt: new Date(), status: 'failed', error: error instanceof Error ? error.message : String(error),
+      pages: result.pages, releases: result.releases, succeeded: result.succeeded, failed: result.failed, pageSize: 100,
     }});
     throw error;
   }
