@@ -10,8 +10,11 @@ const page = await client.getOpportunities({ length, status: 1 });
 let succeeded = 0;
 let failed = 0;
 let documentsDiscovered = 0;
+let documentsResolved = 0;
 let documentsDownloaded = 0;
 const errors: string[] = [];
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 for (const release of page.releases) {
   try {
@@ -19,7 +22,29 @@ for (const release of page.releases) {
     succeeded++;
     documentsDiscovered += result.documents ?? 0;
 
-    if (result.normalized && result.tenderId && result.downloadableDocuments) {
+    if (result.normalized && result.tenderId) {
+      // The live eTenders opportunity response exposes documentId but omits blobName.
+      // Confirmed eTenders downloads use that UUID as blobName, so resolve it before download.
+      const missing = await db.document.findMany({
+        where: { tenderId: result.tenderId, blobName: null },
+        select: { id: true, documentId: true, downloadedFileName: true, title: true },
+      });
+
+      for (const document of missing) {
+        if (!uuid.test(document.documentId)) continue;
+        await db.document.update({
+          where: { id: document.id },
+          data: {
+            blobName: document.documentId,
+            downloadedFileName: document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`,
+            url: `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(document.documentId)}&downloadedFileName=${encodeURIComponent(document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`)}`,
+            downloadStatus: 'discovered',
+            lastDownloadError: null,
+          },
+        });
+        documentsResolved++;
+      }
+
       const downloads = await downloadDiscoveredDocuments(result.tenderId);
       documentsDownloaded += downloads.length;
     }
@@ -69,6 +94,7 @@ console.log(JSON.stringify({
   succeeded,
   failed,
   documentsDiscovered,
+  documentsResolved,
   documentsDownloaded,
   counts,
   sampleDocuments,
