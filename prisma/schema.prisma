@@ -170,9 +170,20 @@ model Document {
   url String?
   datePublished DateTime?
   dateModified DateTime?
+  supportDocumentId String?
+  blobName String?
+  downloadedFileName String?
+  downloadStatus String @default("discovered")
+  storagePath String?
+  fileSize BigInt?
+  checksum String?
+  downloadedAt DateTime?
+  lastDownloadError String?
   tender Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   @@unique([tenderId, documentId])
   @@index([documentType])
+  @@index([blobName])
+  @@index([downloadStatus])
 }
 model Briefing {
   id String @id @default(cuid())
