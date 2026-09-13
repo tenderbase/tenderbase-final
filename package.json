@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/harden-api.mjs && tsc && cp src/fastify-hardening.cjs dist/fastify-hardening.cjs",
+    "build": "prisma db push && node scripts/harden-api.mjs && tsc && cp src/fastify-hardening.cjs dist/fastify-hardening.cjs",
     "start": "node -r ./dist/fastify-hardening.cjs dist/server.js",
     "dev": "tsx watch src/server.ts",
     "db:generate": "prisma generate",
@@ -24,6 +24,6 @@
     "@types/node": "^24.3.2",
     "prisma": "^6.19.3",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "test": "node --test"
   }
 }
