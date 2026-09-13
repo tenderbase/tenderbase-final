@@ -40,10 +40,10 @@ export async function downloadDocument(documentId: string) {
 
   const filename = safeFilename(document.downloadedFileName ?? document.blobName);
   const url = downloadUrl(document.blobName, filename);
-  const storage = createDocumentStorageProvider();
   await db.document.update({ where: { id: document.id }, data: { downloadStatus: 'downloading', lastDownloadError: null, url } });
 
   try {
+    const storage = createDocumentStorageProvider();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     let response: Response;
@@ -103,8 +103,12 @@ export async function downloadDiscoveredDocuments(tenderId: string) {
   const documents = await db.document.findMany({ where: { tenderId, blobName: { not: null }, downloadStatus: { not: 'downloaded' } }, select: { id: true } });
   const results: Array<Awaited<ReturnType<typeof downloadDocument>>> = [];
   for (const document of documents) {
-    try { results.push(await downloadDocument(document.id)); }
-    catch (error) { console.error(JSON.stringify({ service: 'etenders-document-downloader', documentId: document.id, tenderId, error: error instanceof Error ? error.message : String(error) })); }
+    try {
+      results.push(await downloadDocument(document.id));
+    } catch (error) {
+      console.error(JSON.stringify({ service: 'etenders-document-downloader', documentId: document.id, tenderId, error: error instanceof Error ? error.message : String(error) }));
+      throw error;
+    }
   }
   return results;
 }
