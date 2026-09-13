@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { db } from '../db.js';
 import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
+import { downloadDiscoveredDocuments } from '../collectors/etenders/document-downloader.js';
 
 // Official eTenders website scraper is the sole TenderBase ingestion source.
 const port = Number(process.env.PORT ?? 10000);
@@ -14,6 +15,7 @@ healthServer.listen(port, '0.0.0.0', () => console.log(JSON.stringify({ service:
 const arg = (name: string) => process.argv.find(x => x.startsWith(`--${name}=`))?.split('=')[1];
 const initialDays = Number(arg('days') ?? 30);
 const pollMinutes = Math.max(1, Number(process.env.ETENDERS_POLL_MINUTES ?? 15));
+const downloadDocuments = (process.env.ETENDERS_DOWNLOAD_DOCUMENTS ?? 'true').toLowerCase() !== 'false';
 
 function parsedDate(value: unknown): Date | undefined {
   if (value === null || value === undefined || value === '') return undefined;
@@ -21,21 +23,18 @@ function parsedDate(value: unknown): Date | undefined {
   return Number.isFinite(date.getTime()) ? date : undefined;
 }
 
-type ScrapeResult = { pages: number; releases: number; succeeded: number; failed: number };
+type ScrapeResult = { pages: number; releases: number; succeeded: number; failed: number; documents: number; documentFailures: number };
 
 async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuses: number[], mode: string): Promise<ScrapeResult> {
   const client = new EtendersWebClient();
-  let pages = 0, releases = 0, succeeded = 0, failed = 0;
-  console.log(JSON.stringify({ source: 'etenders-web-scraper', dateFrom, dateTo, statuses, mode, batchSize: 10 }));
+  let pages = 0, releases = 0, succeeded = 0, failed = 0, documents = 0, documentFailures = 0;
+  console.log(JSON.stringify({ source: 'etenders-web-scraper', dateFrom, dateTo, statuses, mode, batchSize: 10, downloadDocuments }));
 
   for (const status of statuses) {
     let statusPages = 0;
     let start = 0;
     const length = 100;
 
-    // Fetch pages explicitly so an isolated upstream HTTP 500 does not abort
-    // every other status/feed. The failed page is recorded and this status is
-    // skipped; the next status can still complete and the next poll retries it.
     while (true) {
       let page;
       try {
@@ -68,7 +67,16 @@ async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuse
       for (let offset = 0; offset < candidates.length; offset += 10) {
         await Promise.all(candidates.slice(offset, offset + 10).map(async ({ release }) => {
           releases++;
-          try { await persistRelease(release); succeeded++; }
+          try {
+            const persisted = await persistRelease(release);
+            if (downloadDocuments && persisted.normalized && persisted.tenderId) {
+              const downloaded = await downloadDiscoveredDocuments(persisted.tenderId);
+              documents += downloaded.length;
+              const discovered = persisted.downloadableDocuments ?? 0;
+              if (downloaded.length < discovered) documentFailures += discovered - downloaded.length;
+            }
+            succeeded++;
+          }
           catch (error) {
             failed++;
             await db.ingestionError.create({ data: {
@@ -87,8 +95,9 @@ async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuse
         pages, releases, succeeded, failed,
         checkpoint: status * 100000 + statusPages,
         pageSize: 100,
+        metadata: { mode, source: 'official-etenders-website-scraper', downloadDocuments, documents, documentFailures },
       }});
-      console.log(JSON.stringify({ mode, status, page: statusPages, recordsTotal: page.recordsTotal, pageRows: page.rows.length, matched: candidates.length, releases, succeeded, failed,
+      console.log(JSON.stringify({ mode, status, page: statusPages, recordsTotal: page.recordsTotal, pageRows: page.rows.length, matched: candidates.length, releases, succeeded, failed, documents, documentFailures,
         oldest: pageDates.length ? new Date(Math.min(...pageDates)).toISOString() : null,
         newest: pageDates.length ? new Date(Math.max(...pageDates)).toISOString() : null }));
 
@@ -98,21 +107,21 @@ async function scrapeWindow(runId: string, dateFrom: Date, dateTo: Date, statuse
       start += length;
     }
   }
-  return { pages, releases, succeeded, failed };
+  return { pages, releases, succeeded, failed, documents, documentFailures };
 }
 
 async function executeRun(dateFrom: Date, dateTo: Date, statuses: number[], mode: string) {
   const run = await db.ingestionRun.create({ data: {
     source: 'etenders-web', dateFrom, dateTo,
-    metadata: { mode, source: 'official-etenders-website-scraper', apiDisabled: true, statuses },
+    metadata: { mode, source: 'official-etenders-website-scraper', apiDisabled: true, statuses, downloadDocuments },
   }});
-  let result: ScrapeResult = { pages: 0, releases: 0, succeeded: 0, failed: 0 };
+  let result: ScrapeResult = { pages: 0, releases: 0, succeeded: 0, failed: 0, documents: 0, documentFailures: 0 };
   try {
     result = await scrapeWindow(run.id, dateFrom, dateTo, statuses, mode);
     await db.ingestionRun.update({ where: { id: run.id }, data: {
-      finishedAt: new Date(), status: result.failed ? 'completed_with_errors' : 'completed', ...result, pageSize: 100, error: null,
+      finishedAt: new Date(), status: result.failed || result.documentFailures ? 'completed_with_errors' : 'completed', ...result, pageSize: 100, error: null,
     }});
-    console.log(JSON.stringify({ runId: run.id, status: result.failed ? 'completed_with_errors' : 'completed', ...result, source: 'etenders-web-scraper', mode }));
+    console.log(JSON.stringify({ runId: run.id, status: result.failed || result.documentFailures ? 'completed_with_errors' : 'completed', ...result, source: 'etenders-web-scraper', mode }));
     return result;
   } catch (error) {
     await db.ingestionRun.update({ where: { id: run.id }, data: {
@@ -124,13 +133,10 @@ async function executeRun(dateFrom: Date, dateTo: Date, statuses: number[], mode
 
 async function main() {
   try {
-    // One initial 30-day database fill, using all lifecycle feeds.
     const firstTo = new Date();
     const firstFrom = new Date(firstTo.getTime() - initialDays * 86400000);
     await executeRun(firstFrom, firstTo, [1, 2, 3, 4], 'initial-backfill');
 
-    // Keep the database fresh forever. Only status 1 is polled because it is
-    // the currently-advertised/new-tender feed. Every poll gets its own run.
     while (true) {
       const to = new Date();
       const from = new Date(to.getTime() - Math.max(pollMinutes * 2, 60) * 60000);
