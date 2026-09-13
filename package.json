@@ -12,6 +12,7 @@
     "db:push": "prisma db push",
     "ingest:30d": "tsx src/jobs/etenders-sync.ts --days=30",
     "ingest:hourly": "tsx src/jobs/etenders-sync.ts --hours=2",
+    "ingest:web-smoke": "tsx src/jobs/etenders-web-ingest-smoke.ts",
     "test": "node --test"
   },
   "dependencies": {
