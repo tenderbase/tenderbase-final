@@ -66,18 +66,28 @@ source = source.replaceAll(
   "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
 );
 
+// TenderBase tenderType filter: the web scraper maps eTenders tenderType to Tender.procurementMethodDetails.
+source = source.replaceAll(
+  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;",
+  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;"
+);
+source = source.replaceAll(
+  "{ name: 'category', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
+  "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
+);
+
 // TenderBase department filter
 if (!source.includes('TenderBase department filter')) {
   source = source.replace(
-    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;",
-    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId) where.buyerId = q.buyerId;"
+    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;",
+    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId) where.buyerId = q.buyerId;"
   );
   source = source.replace(
-    "{ name: 'category', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
-    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
   );
   source += "\n// TenderBase department filter\n";
 }
 
 fs.writeFileSync(file, source);
-console.log('TenderBase API hardening/buyer directory/category/department filter patch applied');
+console.log('TenderBase API hardening/buyer directory/category/tenderType/department filter patch applied');
