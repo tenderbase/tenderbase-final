@@ -64,5 +64,19 @@ app.addHook('preValidation', async (request: any, reply: any) => {
   source = source.replace(/\n$/, '') + buyerHook + '\n';
 }
 
+// TenderBase department filter: map the API's department parameter to the
+// procuring entity organization name already stored with each tender.
+if (!source.includes('TenderBase department filter')) {
+  source = source.replace(
+    "if (q.category) where.mainProcurementCategory = q.category; if (q.buyerId) where.buyerId = q.buyerId;",
+    "if (q.category) where.mainProcurementCategory = q.category; if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId) where.buyerId = q.buyerId;"
+  );
+  source = source.replace(
+    "{ name: 'category', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
+  );
+  source += "\n// TenderBase department filter\n";
+}
+
 fs.writeFileSync(file, source);
-console.log('TenderBase API hardening/buyer directory patch applied');
+console.log('TenderBase API hardening/buyer directory/department filter patch applied');
