@@ -16,6 +16,12 @@ const errors: string[] = [];
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function blobNameFor(documentId: string, filename: string | null | undefined): string {
+  if (!filename) return `${documentId}.bin`;
+  const match = filename.match(/\.([A-Za-z0-9]{1,10})$/);
+  return match ? `${documentId}.${match[1]}` : `${documentId}.bin`;
+}
+
 for (const release of page.releases) {
   try {
     const result = await persistRelease(release);
@@ -24,7 +30,8 @@ for (const release of page.releases) {
 
     if (result.normalized && result.tenderId) {
       // The live eTenders opportunity response exposes documentId but omits blobName.
-      // Confirmed eTenders downloads use that UUID as blobName, so resolve it before download.
+      // Browser downloads use the document UUID plus the original file extension,
+      // e.g. <uuid>.pdf or <uuid>.docx. Resolve that exact blob name before download.
       const missing = await db.document.findMany({
         where: { tenderId: result.tenderId, blobName: null },
         select: { id: true, documentId: true, downloadedFileName: true, title: true },
@@ -32,12 +39,16 @@ for (const release of page.releases) {
 
       for (const document of missing) {
         if (!uuid.test(document.documentId)) continue;
+        const filename = document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`;
+        const blobName = blobNameFor(document.documentId, filename);
+        const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
+
         await db.document.update({
           where: { id: document.id },
           data: {
-            blobName: document.documentId,
-            downloadedFileName: document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`,
-            url: `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(document.documentId)}&downloadedFileName=${encodeURIComponent(document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`)}`,
+            blobName,
+            downloadedFileName: filename,
+            url,
             downloadStatus: 'discovered',
             lastDownloadError: null,
           },
