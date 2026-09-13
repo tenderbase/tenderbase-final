@@ -70,7 +70,19 @@ export interface Period { startDate?: string; endDate?: string; maxExtentDate?: 
 export interface Party { id?: string; name?: string; identifier?: JsonObject; address?: JsonObject; contactPoint?: JsonObject; roles?: string[] }
 export interface Lot { id?: string; title?: string; description?: string; value?: { amount?: number; currency?: string } }
 export interface TenderItem { id?: string; description?: string; quantity?: number; unit?: JsonObject; classification?: JsonObject; deliveryAddress?: JsonObject; deliveryPeriod?: Period }
-export interface Document { id?: string; documentType?: string; title?: string; description?: string; format?: string; url?: string; datePublished?: string; dateModified?: string }
+export interface Document {
+  id?: string;
+  documentType?: string;
+  title?: string;
+  description?: string;
+  format?: string;
+  url?: string;
+  datePublished?: string;
+  dateModified?: string;
+  supportDocumentId?: string;
+  blobName?: string;
+  downloadedFileName?: string;
+}
 export interface BriefingSession { date?: string; venue?: string; address?: JsonObject }
 export interface ContactPerson { name?: string; email?: string; telephone?: string; faxNumber?: string }
 export interface Award { id?: string; status?: string; title?: string; description?: string; date?: string; value?: { amount?: number; currency?: string }; suppliers?: Party[] }
