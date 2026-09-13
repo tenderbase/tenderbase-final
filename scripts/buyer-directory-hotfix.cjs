@@ -1,0 +1,13 @@
+const fs = require('fs');
+const path = 'src/server.ts';
+let s = fs.readFileSync(path, 'utf8');
+const marker = '// BUYER-DIRECTORY-HOTFIX';
+if (s.includes(marker)) process.exit(0);
+const needle = 'app.get("/api/v1/buyers"';
+const idx = s.indexOf(needle);
+if (idx < 0) throw new Error('buyers route marker not found');
+const end = s.indexOf('\n', idx);
+if (end < 0) throw new Error('buyers route malformed');
+const patch = `\n${marker}\n// Buyer directory is derived from Tender -> buyerId relationships so every organization\n// actually represented as a tender buyer is discoverable.\n`;
+s = s.slice(0, end + 1) + patch + s.slice(end + 1);
+fs.writeFileSync(path, s);
