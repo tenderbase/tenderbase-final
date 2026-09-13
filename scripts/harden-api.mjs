@@ -70,8 +70,8 @@ source = source.replaceAll(
   "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
 );
 
-// Tender type filter. RFQ is represented in the current stored tender title/description data.
-const tenderTypeRoute = "if (q.tenderType && String(q.tenderType).toUpperCase() === 'RFQ') where.OR = [{ title: { contains: 'RFQ', mode: 'insensitive' } }, { description: { contains: 'RFQ', mode: 'insensitive' } }];";
+// Tender type filter. Preserve any existing keyword OR by adding the RFQ predicate through AND.
+const tenderTypeRoute = "if (q.tenderType && String(q.tenderType).toUpperCase() === 'RFQ') { const rfqPredicate = { OR: [{ title: { contains: 'RFQ', mode: 'insensitive' } }, { description: { contains: 'RFQ', mode: 'insensitive' } }] }; where.AND = [...(where.AND ?? []), rfqPredicate]; }";
 const tenderListNeedle = "if (q.status) where.status = q.status; if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };";
 const tenderListReplacement = tenderListNeedle + ' ' + tenderTypeRoute;
 source = source.replace(tenderListNeedle, tenderListReplacement);
