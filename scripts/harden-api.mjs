@@ -60,33 +60,60 @@ app.addHook('preValidation', async (request: any, reply: any) => {
   source = source.replace(/\n$/, '') + buyerHook + '\n';
 }
 
-// TenderBase category filter: use Tender.category, which contains values such as "Supplies: General".
+// TenderBase normalized category filter
 source = source.replaceAll(
   'if (q.category) where.mainProcurementCategory = q.category;',
   "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
 );
 
-// TenderBase tenderType filter: the web scraper maps eTenders tenderType to Tender.procurementMethodDetails.
-source = source.replaceAll(
-  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;",
-  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;"
-);
-source = source.replaceAll(
-  "{ name: 'category', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
-  "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
-);
+// TenderBase tender type filter: eTenders web rows map tenderType into Tender.procurementMethodDetails.
+const tenderTypeCondition = "if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' };";
+if (!source.includes(tenderTypeCondition)) {
+  const categoryCondition = "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };";
+  source = source.replace(
+    categoryCondition + ' if (q.buyerId)',
+    categoryCondition + ' ' + tenderTypeCondition + ' if (q.buyerId)'
+  );
+  source = source.replace(
+    "if (q.province) where.province = q.province; if (q.status) where.status = q.status; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };",
+    "if (q.province) where.province = q.province; if (q.status) where.status = q.status; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; " + tenderTypeCondition
+  );
+}
+
+// Expose tenderType in OpenAPI documentation if the route parameter exists.
+if (!source.includes("{ name: 'tenderType', in: 'query'")) {
+  source = source.replace(
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'",
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'"
+  );
+}
 
 // TenderBase department filter
 if (!source.includes('TenderBase department filter')) {
   source = source.replace(
-    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; if (q.buyerId) where.buyerId = q.buyerId;",
-    "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId) where.buyerId = q.buyerId;"
+    categoryConditionPlaceholder(source),
+    categoryConditionPlaceholder(source)
   );
+}
+
+function categoryConditionPlaceholder(currentSource) {
+  const base = "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };";
+  const withExtras = base + ' ' + tenderTypeCondition;
+  if (currentSource.includes(withExtras + ' if (q.buyerId)')) {
+    return withExtras + " if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId)";
+  }
+  return base;
+}
+
+source = source.replace(
+  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; " + tenderTypeCondition + ' if (q.buyerId)',
+  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; " + tenderTypeCondition + " if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId)"
+);
+if (!source.includes("{ name: 'department', in: 'query'")) {
   source = source.replace(
-    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'",
-    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } },\n      { name: 'buyerId'"
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'",
+    "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'"
   );
-  source += "\n// TenderBase department filter\n";
 }
 
 fs.writeFileSync(file, source);
