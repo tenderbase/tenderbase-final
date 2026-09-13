@@ -29,18 +29,21 @@ for (const release of page.releases) {
     documentsDiscovered += result.documents ?? 0;
 
     if (result.normalized && result.tenderId) {
-      // The live eTenders opportunity response exposes documentId but omits blobName.
-      // Browser downloads use the document UUID plus the original file extension,
-      // e.g. <uuid>.pdf or <uuid>.docx. Resolve that exact blob name before download.
-      const missing = await db.document.findMany({
-        where: { tenderId: result.tenderId, blobName: null },
-        select: { id: true, documentId: true, downloadedFileName: true, title: true },
+      // The live eTenders opportunity response exposes documentId but can persist
+      // blobName as the bare UUID. Browser downloads require the UUID plus the
+      // original file extension, e.g. <uuid>.pdf or <uuid>.docx.
+      const documents = await db.document.findMany({
+        where: { tenderId: result.tenderId },
+        select: { id: true, documentId: true, downloadedFileName: true, title: true, blobName: true },
       });
 
-      for (const document of missing) {
+      for (const document of documents) {
         if (!uuid.test(document.documentId)) continue;
         const filename = document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`;
         const blobName = blobNameFor(document.documentId, filename);
+        const needsResolution = !document.blobName || document.blobName === document.documentId || !/[.][A-Za-z0-9]{1,10}$/.test(document.blobName);
+        if (!needsResolution) continue;
+
         const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
 
         await db.document.update({
