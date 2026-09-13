@@ -70,6 +70,18 @@ source = source.replaceAll(
   "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
 );
 
+// Normalize category handling on the search endpoint.
+source = source.replaceAll(
+  'if (q.category) where.mainProcurementCategory = q.category;',
+  "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
+);
+
+// Normalize category statistics to the Tender.category field.
+source = source.replaceAll(
+  "db.tender.groupBy({ by: ['mainProcurementCategory'], _count: { _all: true }, orderBy: { _count: { mainProcurementCategory: 'desc' } } })",
+  "db.tender.groupBy({ by: ['category'], _count: { _all: true }, orderBy: { _count: { category: 'desc' } } })"
+);
+
 // Tender type filter. Preserve any existing keyword OR by adding the RFQ predicate through AND.
 const tenderTypeRoute = "if (q.tenderType && String(q.tenderType).toUpperCase() === 'RFQ') { const rfqPredicate = { OR: [{ title: { contains: 'RFQ', mode: 'insensitive' } }, { description: { contains: 'RFQ', mode: 'insensitive' } }] }; where.AND = [...(where.AND ?? []), rfqPredicate]; }";
 const tenderListNeedle = "if (q.status) where.status = q.status; if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };";
