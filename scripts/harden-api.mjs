@@ -41,6 +41,8 @@ if (!source.includes('TenderBase API hardening')) {
 }
 
 if (!source.includes('TenderBase buyer directory')) {
+  const totalSql = 'SELECT COUNT(*)::int AS count FROM "Organization" o WHERE EXISTS (SELECT 1 FROM "Tender" t WHERE t."buyerId" = o.id) AND ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", \'\') ILIKE $1)';
+  const itemsSql = 'SELECT o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson", COUNT(t.id)::int AS "tenderCount" FROM "Organization" o INNER JOIN "Tender" t ON t."buyerId" = o.id WHERE ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", \'\') ILIKE $1) GROUP BY o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson" ORDER BY o.name ASC LIMIT $2 OFFSET $3';
   const buyerHook = [
     '',
     '// TenderBase buyer directory',
@@ -52,9 +54,9 @@ if (!source.includes('TenderBase buyer directory')) {
     '  const offset = (page - 1) * limit;',
     "  const search = String(q.q ?? q.search ?? '').trim();",
     "  const pattern = search ? '%' + search + '%' : null;",
-    '  const totalRows = await db.$queryRawUnsafe(\'SELECT COUNT(*)::int AS count FROM "Organization" o WHERE EXISTS (SELECT 1 FROM "Tender" t WHERE t."buyerId" = o.id) AND ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", \'\') ILIKE $1)\', pattern);',
+    `  const totalRows = await db.$queryRawUnsafe(${JSON.stringify(totalSql)}, pattern);`,
     '  const total = Number(totalRows[0]?.count ?? 0);',
-    '  const items = await db.$queryRawUnsafe(\'SELECT o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson", COUNT(t.id)::int AS "tenderCount" FROM "Organization" o INNER JOIN "Tender" t ON t."buyerId" = o.id WHERE ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", \'\') ILIKE $1) GROUP BY o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson" ORDER BY o.name ASC LIMIT $2 OFFSET $3\', pattern, limit, offset);',
+    `  const items = await db.$queryRawUnsafe(${JSON.stringify(itemsSql)}, pattern, limit, offset);`,
     '  return reply.send({ page, limit, total, pages: Math.ceil(total / limit), items });',
     '});',
     ''
@@ -62,7 +64,7 @@ if (!source.includes('TenderBase buyer directory')) {
   source = source.replace(/\n$/, '') + buyerHook + '\n';
 }
 
-// TenderBase normalized category filter
+// TenderBase normalized category filter.
 source = source.replaceAll(
   'if (q.category) where.mainProcurementCategory = q.category;',
   "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
@@ -78,7 +80,7 @@ source = source.replace(
   tenderListReplacement + " if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId)"
 );
 
-// OpenAPI tenderType and department parameters
+// OpenAPI tenderType and department parameters.
 if (!source.includes("{ name: 'tenderType', in: 'query'")) {
   source = source.replace(
     "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'",
