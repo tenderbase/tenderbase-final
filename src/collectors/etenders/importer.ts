@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { db } from '../../db.js';
 import type { Release, Party } from './types.js';
 
-const SOURCE_KEY = 'etenders-ocds';
-const SOURCE_NAME = 'South Africa eTenders OCDS API';
-const SOURCE_URL = process.env.ETENDERS_BASE_URL ?? 'https://ocds-api.etenders.gov.za';
+const SOURCE_KEY = 'etenders-web';
+const SOURCE_NAME = 'South Africa eTenders official website';
+const SOURCE_URL = process.env.ETENDERS_WEB_BASE_URL ?? 'https://www.etenders.gov.za';
 
 const asDate = (v?: string) => v ? new Date(v) : undefined;
 const json = (v: unknown) => (v ?? undefined) as any;
@@ -68,7 +68,23 @@ export async function persistRelease(release: Release) {
   await db.tenderItem.deleteMany({ where: { tenderId: tender.id } });
   for (const item of t.items ?? []) await db.tenderItem.create({ data: { tenderId: tender.id, itemId: item.id ?? hash(item).slice(0, 24), description: item.description, quantity: item.quantity, unit: json(item.unit), classification: json(item.classification), deliveryAddress: json(item.deliveryAddress), deliveryPeriod: json(item.deliveryPeriod) } });
   await db.document.deleteMany({ where: { tenderId: tender.id } });
-  for (const d of t.documents ?? []) await db.document.create({ data: { tenderId: tender.id, documentId: d.id ?? hash(d).slice(0, 24), documentType: d.documentType, title: d.title, description: d.description, format: d.format, url: d.url, datePublished: asDate(d.datePublished), dateModified: asDate(d.dateModified) } });
+  for (const d of t.documents ?? []) {
+    await db.document.create({ data: {
+      tenderId: tender.id,
+      documentId: d.id ?? d.supportDocumentId ?? d.blobName ?? hash(d).slice(0, 24),
+      documentType: d.documentType,
+      title: d.title,
+      description: d.description,
+      format: d.format,
+      url: d.url,
+      datePublished: asDate(d.datePublished),
+      dateModified: asDate(d.dateModified),
+      supportDocumentId: d.supportDocumentId,
+      blobName: d.blobName,
+      downloadedFileName: d.downloadedFileName,
+      downloadStatus: d.blobName ? 'discovered' : 'missing_blob_name',
+    } });
+  }
   await db.lot.deleteMany({ where: { tenderId: tender.id } });
   for (const lot of t.lots ?? []) if (lot.id) await db.lot.create({ data: { tenderId: tender.id, lotId: lot.id, title: lot.title, description: lot.description, valueAmount: amount(lot.value), currency: currency(lot.value) } });
   await db.contact.deleteMany({ where: { tenderId: tender.id } });
@@ -86,5 +102,5 @@ export async function persistRelease(release: Release) {
     const award = contract.awardID ? await db.award.findFirst({ where: { tenderId: tender.id, awardId: contract.awardID } }) : null;
     await db.contract.upsert({ where: { tenderId_contractId: { tenderId: tender.id, contractId: contract.id } }, create: { tenderId: tender.id, awardId: award?.id, contractId: contract.id, title: contract.title, period: json(contract.period), valueAmount: amount(contract.value), valueCurrency: currency(contract.value), rawJson: json(contract) }, update: { awardId: award?.id, title: contract.title, period: json(contract.period), valueAmount: amount(contract.value), valueCurrency: currency(contract.value), rawJson: json(contract) } });
   }
-  return { sourceRecordId: sourceRecord.id, releaseId: release.id, normalized: true, tenderId: tender.id };
+  return { sourceRecordId: sourceRecord.id, releaseId: release.id, normalized: true, tenderId: tender.id, documents: t.documents?.length ?? 0, downloadableDocuments: t.documents?.filter(d => d.blobName).length ?? 0 };
 }
