@@ -51,13 +51,13 @@ app.addHook('preValidation', async (request: any, reply: any) => {
   const offset = (page - 1) * limit;
   const search = String(q.q ?? q.search ?? '').trim();
   const pattern = search ? '%' + search + '%' : null;
-  const totalRows: any[] = await db.$queryRawUnsafe(\`SELECT COUNT(*)::int AS count FROM "Organization" o WHERE EXISTS (SELECT 1 FROM "Tender" t WHERE t."buyerId" = o.id) AND ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", '') ILIKE $1)\`, pattern);
+  const totalRows: any[] = await db.$queryRawUnsafe(\\`SELECT COUNT(*)::int AS count FROM "Organization" o WHERE EXISTS (SELECT 1 FROM "Tender" t WHERE t."buyerId" = o.id) AND ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", '') ILIKE $1)\\`, pattern);
   const total = Number(totalRows[0]?.count ?? 0);
-  const items = await db.$queryRawUnsafe(\`SELECT o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson", COUNT(t.id)::int AS "tenderCount" FROM "Organization" o INNER JOIN "Tender" t ON t."buyerId" = o.id WHERE ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", '') ILIKE $1) GROUP BY o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson" ORDER BY o.name ASC LIMIT $2 OFFSET $3\`, pattern, limit, offset);
+  const items = await db.$queryRawUnsafe(\\`SELECT o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson", COUNT(t.id)::int AS "tenderCount" FROM "Organization" o INNER JOIN "Tender" t ON t."buyerId" = o.id WHERE ($1::text IS NULL OR o.name ILIKE $1 OR COALESCE(o."identifier", '') ILIKE $1) GROUP BY o.id, o."ocdsId", o.name, o.identifier, o.address, o."contactPoint", o."rawJson" ORDER BY o.name ASC LIMIT $2 OFFSET $3\\`, pattern, limit, offset);
   return reply.send({ page, limit, total, pages: Math.ceil(total / limit), items });
 });
 `;
-  source = source.replace(/\n$/, '') + buyerHook + '\n';
+  source = source.replace(/\\n$/, '') + buyerHook + '\\n';
 }
 
 // TenderBase normalized category filter
@@ -66,21 +66,14 @@ source = source.replaceAll(
   "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };"
 );
 
-// TenderBase tender type filter: eTenders web rows map tenderType into Tender.procurementMethodDetails.
-const tenderTypeCondition = "if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' };";
-if (!source.includes(tenderTypeCondition)) {
-  const categoryCondition = "if (q.category) where.category = { contains: q.category, mode: 'insensitive' };";
-  source = source.replace(
-    categoryCondition + ' if (q.buyerId)',
-    categoryCondition + ' ' + tenderTypeCondition + ' if (q.buyerId)'
-  );
-  source = source.replace(
-    "if (q.province) where.province = q.province; if (q.status) where.status = q.status; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };",
-    "if (q.province) where.province = q.province; if (q.status) where.status = q.status; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; " + tenderTypeCondition
-  );
-}
+// TenderBase tender type filter
+const tenderTypeCondition = "if (q.tenderType) { const type = String(q.tenderType).trim().toUpperCase(); if (type === 'RFQ' || type === 'REQUEST FOR QUOTATION') { where.AND = [...(where.AND ?? []), { OR: [{ title: { contains: 'RFQ', mode: 'insensitive' } }, { ocid: { contains: 'RFQ', mode: 'insensitive' } }] }]; } else { where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' }; } }";
+source = source.replaceAll(
+  "if (q.tenderType) where.procurementMethodDetails = { contains: q.tenderType, mode: 'insensitive' };",
+  tenderTypeCondition
+);
 
-// Expose tenderType in OpenAPI documentation if the route parameter exists.
+// Expose tenderType in OpenAPI documentation.
 if (!source.includes("{ name: 'tenderType', in: 'query'")) {
   source = source.replace(
     "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'",
@@ -91,29 +84,14 @@ if (!source.includes("{ name: 'tenderType', in: 'query'")) {
 // TenderBase department filter
 if (!source.includes('TenderBase department filter')) {
   source = source.replace(
-    categoryConditionPlaceholder(source),
-    categoryConditionPlaceholder(source)
+    'if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: \'insensitive\' }; ' + tenderTypeCondition + ' if (q.buyerId)',
+    'if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: \'insensitive\' }; ' + tenderTypeCondition + ' if (q.department) where.procuringEntity = { name: { contains: q.department, mode: \'insensitive\' } }; if (q.buyerId)'
   );
-}
-
-function categoryConditionPlaceholder(currentSource) {
-  const base = "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' };";
-  const withExtras = base + ' ' + tenderTypeCondition;
-  if (currentSource.includes(withExtras + ' if (q.buyerId)')) {
-    return withExtras + " if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId)";
-  }
-  return base;
-}
-
-source = source.replace(
-  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; " + tenderTypeCondition + ' if (q.buyerId)',
-  "if (q.province) where.province = q.province; if (q.category) where.category = { contains: q.category, mode: 'insensitive' }; " + tenderTypeCondition + " if (q.department) where.procuringEntity = { name: { contains: q.department, mode: 'insensitive' } }; if (q.buyerId)"
-);
-if (!source.includes("{ name: 'department', in: 'query'")) {
   source = source.replace(
     "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'",
     "{ name: 'category', in: 'query', schema: { type: 'string' } }, { name: 'tenderType', in: 'query', schema: { type: 'string' } }, { name: 'department', in: 'query', schema: { type: 'string' } }, { name: 'buyerId'"
   );
+  source += "\n// TenderBase department filter\n";
 }
 
 fs.writeFileSync(file, source);
