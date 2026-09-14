@@ -1,6 +1,6 @@
 import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
-import { downloadDiscoveredDocuments } from '../collectors/etenders/document-downloader.js';
+import { downloadDocument } from '../collectors/etenders/document-downloader.js';
 import { db } from '../db.js';
 
 const client = new EtendersWebClient();
@@ -10,8 +10,18 @@ const page = await client.getOpportunities({ length, status: 1 });
 let succeeded = 0;
 let failed = 0;
 let documentsDiscovered = 0;
+let documentsResolved = 0;
 let documentsDownloaded = 0;
+let storageSmokeVerified = false;
 const errors: string[] = [];
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function blobNameFor(documentId: string, filename: string | null | undefined): string {
+  if (!filename) return `${documentId}.bin`;
+  const match = filename.match(/\.([A-Za-z0-9]{1,10})$/);
+  return match ? `${documentId}.${match[1]}` : `${documentId}.bin`;
+}
 
 for (const release of page.releases) {
   try {
@@ -19,13 +29,67 @@ for (const release of page.releases) {
     succeeded++;
     documentsDiscovered += result.documents ?? 0;
 
-    if (result.normalized && result.tenderId && result.downloadableDocuments) {
-      const downloads = await downloadDiscoveredDocuments(result.tenderId);
-      documentsDownloaded += downloads.length;
+    if (result.normalized && result.tenderId) {
+      const documents = await db.document.findMany({
+        where: { tenderId: result.tenderId },
+        select: { id: true, documentId: true, downloadedFileName: true, title: true, blobName: true },
+      });
+
+      for (const document of documents) {
+        if (!uuid.test(document.documentId)) continue;
+        const filename = document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`;
+        const blobName = blobNameFor(document.documentId, filename);
+        const needsResolution = !document.blobName || document.blobName === document.documentId || !/[.][A-Za-z0-9]{1,10}$/.test(document.blobName);
+        if (needsResolution) {
+          const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
+          await db.document.update({
+            where: { id: document.id },
+            data: { blobName, downloadedFileName: filename, url, downloadStatus: 'discovered', lastDownloadError: null },
+          });
+          documentsResolved++;
+        }
+      }
     }
   } catch (error) {
     failed++;
     errors.push(`${release.ocid}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// Force exactly one real eTenders document through the current storage provider,
+// even when the database already contains documents from the old /tmp provider.
+const smokeDocument = await db.document.findFirst({
+  where: { blobName: { not: null }, documentId: { not: '' } },
+  orderBy: { id: 'desc' },
+  select: { id: true, tenderId: true, documentId: true, blobName: true, downloadedFileName: true, title: true },
+});
+
+if (!smokeDocument) {
+  failed++;
+  errors.push('No downloadable eTenders document is available for storage smoke verification');
+} else {
+  const filename = smokeDocument.downloadedFileName ?? smokeDocument.title ?? `${smokeDocument.documentId}.bin`;
+  const blobName = uuid.test(smokeDocument.documentId) ? blobNameFor(smokeDocument.documentId, filename) : smokeDocument.blobName!;
+  const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
+  await db.document.update({
+    where: { id: smokeDocument.id },
+    data: { blobName, downloadedFileName: filename, url, downloadStatus: 'discovered', storageProvider: null, storageBucket: null, storagePath: null, fileSize: null, checksum: null, downloadedAt: null, lastDownloadError: null },
+  });
+
+  try {
+    const result = await downloadDocument(smokeDocument.id);
+    documentsDownloaded = 1;
+    storageSmokeVerified = result.storageProvider === 'cloudflare-r2'
+      && result.storageBucket.length > 0
+      && result.storagePath.startsWith('etenders/')
+      && result.bytes > 0;
+    if (!storageSmokeVerified) {
+      failed++;
+      errors.push('Storage smoke download completed but did not return a verified Cloudflare R2 result');
+    }
+  } catch (error) {
+    failed++;
+    errors.push(`Storage smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -41,6 +105,7 @@ const counts = {
 };
 
 const sampleDocuments = await db.document.findMany({
+  where: { storageProvider: 'cloudflare-r2', downloadStatus: 'downloaded' },
   orderBy: { downloadedAt: 'desc' },
   take: 10,
   select: {
@@ -52,6 +117,8 @@ const sampleDocuments = await db.document.findMany({
     blobName: true,
     downloadedFileName: true,
     downloadStatus: true,
+    storageProvider: true,
+    storageBucket: true,
     storagePath: true,
     fileSize: true,
     checksum: true,
@@ -61,6 +128,11 @@ const sampleDocuments = await db.document.findMany({
   },
 });
 
+if (!storageSmokeVerified) {
+  failed++;
+  errors.push('Storage smoke did not produce a verified Cloudflare R2 document record');
+}
+
 console.log(JSON.stringify({
   status: failed === 0 ? 'ok' : 'partial',
   sourceEndpoint: '/Home/PaginatedTenderOpportunities',
@@ -69,7 +141,9 @@ console.log(JSON.stringify({
   succeeded,
   failed,
   documentsDiscovered,
+  documentsResolved,
   documentsDownloaded,
+  storageSmokeVerified,
   counts,
   sampleDocuments,
   errors,
