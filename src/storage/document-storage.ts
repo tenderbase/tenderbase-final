@@ -5,7 +5,7 @@ export type DocumentStorageProvider = {
   readonly name: string;
   readonly bucket: string;
   putObject(input: { key: string; body: Buffer; contentType?: string; metadata?: Record<string, string> }): Promise<{ key: string; bytes: number }>;
-  headObject(key: string): Promise<{ key: string; bytes: number; contentType?: string }>;
+  headObject(key: string): Promise<{ key: string; bytes: any; contentType?: string }>;
   getDownloadUrl(key: string, expiresInSeconds?: number): Promise<string>;
 };
 
