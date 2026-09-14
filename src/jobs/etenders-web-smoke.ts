@@ -31,7 +31,7 @@ for (const release of page.releases) {
     if (result.normalized && result.tenderId) {
       const documents = await db.document.findMany({
         where: { tenderId: result.tenderId },
-        select: { id: true, documentId: true, downloadedFileName: true, title: true, blobName: true, downloadStatus: true },
+        select: { id: true, documentId: true, downloadedFileName: true, title: true, blobName: true },
       });
 
       for (const document of documents) {
@@ -59,7 +59,7 @@ for (const release of page.releases) {
 // the database already contains documents downloaded by the old /tmp provider.
 const smokeDocument = await db.document.findFirst({
   where: { blobName: { not: null }, documentId: { not: '' } },
-  orderBy: { createdAt: 'desc' },
+  orderBy: { downloadedAt: 'desc' },
   select: { id: true, tenderId: true, documentId: true, blobName: true, downloadedFileName: true, title: true },
 });
 
