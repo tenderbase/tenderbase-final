@@ -59,7 +59,7 @@ for (const release of page.releases) {
 // the database already contains documents downloaded by the old /tmp provider.
 const smokeDocument = await db.document.findFirst({
   where: { blobName: { not: null }, documentId: { not: '' } },
-  orderBy: { downloadedAt: 'desc' },
+  orderBy: { id: 'desc' },
   select: { id: true, tenderId: true, documentId: true, blobName: true, downloadedFileName: true, title: true },
 });
 
