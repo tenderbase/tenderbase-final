@@ -1,0 +1,5 @@
+TenderBase GitHub write test
+
+This file confirms that ChatGPT can write to the tenderbase/tenderbase-final repository.
+
+Status: WRITE ACCESS CONFIRMED
