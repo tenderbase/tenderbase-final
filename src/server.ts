@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { db } from './db.js';
+import { createDocumentStorageProvider } from './storage/document-storage.js';
 
 const app = Fastify({ logger: true });
 
@@ -21,7 +22,7 @@ const openapi = {
   servers: [{ url: '/'}],
   tags: [
     { name: 'System' }, { name: 'Tenders' }, { name: 'OCDS' }, { name: 'Buyers' },
-    { name: 'Suppliers' }, { name: 'Awards' }, { name: 'Statistics' }
+    { name: 'Suppliers' }, { name: 'Awards' }, { name: 'Statistics' }, { name: 'Documents' }
   ],
   components: { schemas, parameters: {
     Page: { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
@@ -52,11 +53,12 @@ const openapi = {
     '/api/v1/tenders/{id}': { get: { tags: ['Tenders'], summary: 'Get a tender by internal id or OCID', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Tender', content: { 'application/json': { schema: { '$ref': '#/components/schemas/Tender' } } } }, '404': { description: 'Not found' } } } },
     '/api/v1/tenders/{id}/raw': { get: { tags: ['Tenders'], summary: 'Get stored raw tender JSON', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Raw JSON' }, '404': { description: 'Not found' } } } },
     '/api/v1/tenders/{id}/timeline': { get: { tags: ['Tenders'], summary: 'Get tender release timeline', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Timeline' }, '404': { description: 'Not found' } } } },
-    '/api/v1/tenders/{id}/awards': { get: { tags: ['Awards'], summary: 'Get awards for a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Awards' }, '404': { description: 'Tender not found' } } } },
-    '/api/v1/tenders/{id}/documents': { get: { tags: ['Tenders'], summary: 'Get documents for a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Documents' }, '404': { description: 'Tender not found' } } } },
+    '/api/v1/tenders/{id}/awards': { get: { tags: ['Awards'], summary: 'Get awards for a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Awards' } } } },
+    '/api/v1/tenders/{id}/documents': { get: { tags: ['Tenders'], summary: 'Get documents for a tender', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Documents' } } } },
+    '/api/v1/documents/{id}/download': { get: { tags: ['Documents'], summary: 'Get a short-lived signed download URL for a stored document', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Signed document URL' }, '404': { description: 'Document not found' }, '409': { description: 'Document is not stored in object storage' }, '503': { description: 'Document storage unavailable' } } } },
     '/api/v1/ocds/releases': { get: { tags: ['OCDS'], summary: 'List stored OCDS-style releases', parameters: [{ '$ref': '#/components/parameters/Page' }, { '$ref': '#/components/parameters/Limit' }], responses: { '200': { description: 'Paginated releases' } } } },
     '/api/v1/ocds/releases/{releaseId}': { get: { tags: ['OCDS'], summary: 'Get one stored release', parameters: [{ name: 'releaseId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Release JSON' }, '404': { description: 'Not found' } } } },
-    '/api/v1/ocds/records/{ocid}': { get: { tags: ['OCDS'], summary: 'Get all releases for an OCID', parameters: [{ name: 'ocid', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Record history' }, '404': { description: 'Not found' } } } },
+    '/api/v1/ocds/records/{ocid}': { get: { tags: ['OCDS'], summary: 'Get all releases for an OCID', parameters: [{ name: 'ocid', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Record history' } } } },
     '/api/v1/buyers': { get: { tags: ['Buyers'], summary: 'List buyer organizations', parameters: [{ '$ref': '#/components/parameters/Page' }, { '$ref': '#/components/parameters/Limit' }, { name: 'q', in: 'query', schema: { type: 'string' } }], responses: { '200': { description: 'Paginated buyers' } } } },
     '/api/v1/buyers/{id}': { get: { tags: ['Buyers'], summary: 'Get a buyer', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Buyer' }, '404': { description: 'Not found' } } } },
     '/api/v1/buyers/{id}/tenders': { get: { tags: ['Buyers'], summary: 'List tenders for a buyer', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { '$ref': '#/components/parameters/Page' }, { '$ref': '#/components/parameters/Limit' }], responses: { '200': { description: 'Buyer tenders' } } } },
@@ -117,6 +119,28 @@ app.get('/api/v1/suppliers/:id', async (request, reply) => { const { id } = requ
 app.get('/api/v1/awards', async (request) => { const { page, limit, skip } = pagination(request.query); const [items, total] = await Promise.all([db.award.findMany({ orderBy: { date: 'desc' }, skip, take: limit, include: { suppliers: { include: { organization: true } } } }), db.award.count()]); return { page, limit, total, pages: Math.ceil(total / limit), items }; });
 app.get('/api/v1/tenders/:id/awards', async (request, reply) => { const { id } = request.params as any; const tender = await db.tender.findFirst({ where: { OR: [{ id }, { ocid: id }] } }); if (!tender) return reply.code(404).send({ error: 'Tender not found' }); return db.award.findMany({ where: { tenderId: tender.id }, include: { suppliers: { include: { organization: true } } } }); });
 app.get('/api/v1/tenders/:id/documents', async (request, reply) => { const { id } = request.params as any; const tender = await db.tender.findFirst({ where: { OR: [{ id }, { ocid: id }] } }); if (!tender) return reply.code(404).send({ error: 'Tender not found' }); return db.document.findMany({ where: { tenderId: tender.id } }); });
+
+app.get('/api/v1/documents/:id/download', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const document = await db.document.findUnique({ where: { id } });
+  if (!document) return reply.code(404).send({ error: 'Document not found' });
+  if (document.downloadStatus !== 'downloaded' || document.storageProvider !== 'cloudflare-r2' || !document.storagePath) {
+    return reply.code(409).send({ error: 'Document is not stored in object storage', downloadStatus: document.downloadStatus, storageProvider: document.storageProvider });
+  }
+  try {
+    const storage = createDocumentStorageProvider();
+    const head = await storage.headObject(document.storagePath);
+    if (!head.bytes || (document.fileSize != null && head.bytes !== document.fileSize)) {
+      return reply.code(409).send({ error: 'Stored document failed integrity verification' });
+    }
+    const expiresIn = 300;
+    const url = await storage.getDownloadUrl(document.storagePath, expiresIn);
+    return { documentId: document.id, filename: document.downloadedFileName ?? document.title, contentType: head.contentType ?? null, bytes: head.bytes, expiresInSeconds: expiresIn, url };
+  } catch (error) {
+    request.log.error({ error, documentId: id }, 'Failed to create document download URL');
+    return reply.code(503).send({ error: 'Document storage unavailable' });
+  }
+});
 
 app.get('/api/v1/statistics/tenders', async () => ({ tenders: await db.tender.count(), releases: await db.release.count(), sourceRecords: await db.sourceRecord.count(), organizations: await db.organization.count(), awards: await db.award.count(), contracts: await db.contract.count() }));
 app.get('/api/v1/statistics/provinces', async () => db.tender.groupBy({ by: ['province'], _count: { _all: true }, orderBy: { _count: { province: 'desc' } } }));
