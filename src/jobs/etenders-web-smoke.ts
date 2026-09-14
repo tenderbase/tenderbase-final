@@ -29,12 +29,9 @@ for (const release of page.releases) {
     documentsDiscovered += result.documents ?? 0;
 
     if (result.normalized && result.tenderId) {
-      // The live eTenders opportunity response exposes documentId but can persist
-      // blobName as the bare UUID. Browser downloads require the UUID plus the
-      // original file extension, e.g. <uuid>.pdf or <uuid>.docx.
       const documents = await db.document.findMany({
         where: { tenderId: result.tenderId },
-        select: { id: true, documentId: true, downloadedFileName: true, title: true, blobName: true },
+        select: { id: true, documentId: true, downloadedFileName: true, title: true, blobName: true, downloadStatus: true },
       });
 
       for (const document of documents) {
@@ -42,29 +39,52 @@ for (const release of page.releases) {
         const filename = document.downloadedFileName ?? document.title ?? `${document.documentId}.bin`;
         const blobName = blobNameFor(document.documentId, filename);
         const needsResolution = !document.blobName || document.blobName === document.documentId || !/[.][A-Za-z0-9]{1,10}$/.test(document.blobName);
-        if (!needsResolution) continue;
-
-        const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
-
-        await db.document.update({
-          where: { id: document.id },
-          data: {
-            blobName,
-            downloadedFileName: filename,
-            url,
-            downloadStatus: 'discovered',
-            lastDownloadError: null,
-          },
-        });
-        documentsResolved++;
+        if (needsResolution) {
+          const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
+          await db.document.update({
+            where: { id: document.id },
+            data: { blobName, downloadedFileName: filename, url, downloadStatus: 'discovered', lastDownloadError: null },
+          });
+          documentsResolved++;
+        }
       }
-
-      const downloads = await downloadDiscoveredDocuments(result.tenderId);
-      documentsDownloaded += downloads.length;
     }
   } catch (error) {
     failed++;
     errors.push(`${release.ocid}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// Force exactly one real document through the current storage provider even when
+// the database already contains documents downloaded by the old /tmp provider.
+const smokeDocument = await db.document.findFirst({
+  where: { blobName: { not: null }, documentId: { not: '' } },
+  orderBy: { createdAt: 'desc' },
+  select: { id: true, tenderId: true, documentId: true, blobName: true, downloadedFileName: true, title: true },
+});
+
+if (!smokeDocument) {
+  failed++;
+  errors.push('No downloadable eTenders document is available for storage smoke verification');
+} else {
+  const filename = smokeDocument.downloadedFileName ?? smokeDocument.title ?? `${smokeDocument.documentId}.bin`;
+  const blobName = uuid.test(smokeDocument.documentId) ? blobNameFor(smokeDocument.documentId, filename) : smokeDocument.blobName!;
+  const url = `https://www.etenders.gov.za/home/Download/?blobName=${encodeURIComponent(blobName)}&downloadedFileName=${encodeURIComponent(filename)}`;
+  await db.document.update({
+    where: { id: smokeDocument.id },
+    data: { blobName, downloadedFileName: filename, url, downloadStatus: 'discovered', storageProvider: null, storageBucket: null, storagePath: null, fileSize: null, checksum: null, downloadedAt: null, lastDownloadError: null },
+  });
+
+  try {
+    const downloads = await downloadDiscoveredDocuments(smokeDocument.tenderId);
+    documentsDownloaded = downloads.length;
+    if (documentsDownloaded !== 1) {
+      failed++;
+      errors.push(`Storage smoke expected exactly 1 document download, got ${documentsDownloaded}`);
+    }
+  } catch (error) {
+    failed++;
+    errors.push(`Storage smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -91,6 +111,8 @@ const sampleDocuments = await db.document.findMany({
     blobName: true,
     downloadedFileName: true,
     downloadStatus: true,
+    storageProvider: true,
+    storageBucket: true,
     storagePath: true,
     fileSize: true,
     checksum: true,
@@ -99,6 +121,12 @@ const sampleDocuments = await db.document.findMany({
     url: true,
   },
 });
+
+const smokeVerified = sampleDocuments.some((document) => document.storageProvider === 'cloudflare-r2' && document.storageBucket && document.storagePath && document.downloadStatus === 'downloaded');
+if (!smokeVerified) {
+  failed++;
+  errors.push('Storage smoke did not produce a verified Cloudflare R2 document record');
+}
 
 console.log(JSON.stringify({
   status: failed === 0 ? 'ok' : 'partial',
@@ -110,6 +138,7 @@ console.log(JSON.stringify({
   documentsDiscovered,
   documentsResolved,
   documentsDownloaded,
+  storageSmokeVerified: smokeVerified,
   counts,
   sampleDocuments,
   errors,
