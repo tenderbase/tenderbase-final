@@ -1,6 +1,6 @@
 import { EtendersWebClient } from '../collectors/etenders/web-client.js';
 import { persistRelease } from '../collectors/etenders/importer.js';
-import { downloadDiscoveredDocuments } from '../collectors/etenders/document-downloader.js';
+import { downloadDocument } from '../collectors/etenders/document-downloader.js';
 import { db } from '../db.js';
 
 const client = new EtendersWebClient();
@@ -12,6 +12,7 @@ let failed = 0;
 let documentsDiscovered = 0;
 let documentsResolved = 0;
 let documentsDownloaded = 0;
+let storageSmokeVerified = false;
 const errors: string[] = [];
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -55,8 +56,8 @@ for (const release of page.releases) {
   }
 }
 
-// Force exactly one real document through the current storage provider even when
-// the database already contains documents downloaded by the old /tmp provider.
+// Force exactly one real eTenders document through the current storage provider,
+// even when the database already contains documents from the old /tmp provider.
 const smokeDocument = await db.document.findFirst({
   where: { blobName: { not: null }, documentId: { not: '' } },
   orderBy: { id: 'desc' },
@@ -76,11 +77,15 @@ if (!smokeDocument) {
   });
 
   try {
-    const downloads = await downloadDiscoveredDocuments(smokeDocument.tenderId);
-    documentsDownloaded = downloads.length;
-    if (documentsDownloaded !== 1) {
+    const result = await downloadDocument(smokeDocument.id);
+    documentsDownloaded = 1;
+    storageSmokeVerified = result.storageProvider === 'cloudflare-r2'
+      && result.storageBucket.length > 0
+      && result.storagePath.startsWith('etenders/')
+      && result.bytes > 0;
+    if (!storageSmokeVerified) {
       failed++;
-      errors.push(`Storage smoke expected exactly 1 document download, got ${documentsDownloaded}`);
+      errors.push('Storage smoke download completed but did not return a verified Cloudflare R2 result');
     }
   } catch (error) {
     failed++;
@@ -100,6 +105,7 @@ const counts = {
 };
 
 const sampleDocuments = await db.document.findMany({
+  where: { storageProvider: 'cloudflare-r2', downloadStatus: 'downloaded' },
   orderBy: { downloadedAt: 'desc' },
   take: 10,
   select: {
@@ -122,8 +128,7 @@ const sampleDocuments = await db.document.findMany({
   },
 });
 
-const smokeVerified = sampleDocuments.some((document) => document.storageProvider === 'cloudflare-r2' && document.storageBucket && document.storagePath && document.downloadStatus === 'downloaded');
-if (!smokeVerified) {
+if (!storageSmokeVerified) {
   failed++;
   errors.push('Storage smoke did not produce a verified Cloudflare R2 document record');
 }
@@ -138,7 +143,7 @@ console.log(JSON.stringify({
   documentsDiscovered,
   documentsResolved,
   documentsDownloaded,
-  storageSmokeVerified: smokeVerified,
+  storageSmokeVerified,
   counts,
   sampleDocuments,
   errors,
